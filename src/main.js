@@ -1,18 +1,25 @@
 import './styles.css';
+import { Capacitor } from '@capacitor/core';
 import { PeerSession } from './peer-session.js';
 import { askModel } from './llm.js';
+import { defaultRoleForPlatform } from './platform.js';
 
 const $ = id => document.getElementById(id);
 const state = {
   role: 'desktop', peer: null, displayStream: null, outgoingStream: null, recognition: null,
   voiceActive: false, voiceBuffer: '', voiceTimer: null, requestCount: 0,
-  latestImage: '', chatHistory: [], lastAnswer: '', toastTimer: null,
+  latestImage: '', chatHistory: [], lastAnswer: '', toastTimer: null, lanAddresses: [],
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
-const defaultBase = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
-  ? location.protocol + '//' + location.hostname + ':8787'
-  : location.origin;
+const initialRole = defaultRoleForPlatform(Capacitor.getPlatform());
+const defaultBase = initialRole === 'mobile' ? ''
+  : window.desktopBridge ? 'http://127.0.0.1:8787'
+  : location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+    ? location.protocol + '//' + location.hostname + ':8787'
+    : location.port === '5173'
+      ? location.protocol + '//' + location.hostname + ':8787'
+      : location.origin;
 
 function readPreferences() {
   try { return JSON.parse(localStorage.getItem(preferenceKey) || '{}'); } catch { return {}; }
@@ -81,6 +88,29 @@ function makePeer(role) {
   return peer;
 }
 
+function dispatchDesktopHotkey(action) {
+  if (state.role !== 'desktop' || !state.displayStream) return;
+  if (action === 'screenshot') takeScreenshot();
+  if (action === 'voice') state.voiceActive ? stopVoice(true) : startVoice();
+  if (action === 'auto-answer') {
+    try { state.peer.send({ type: 'control', action: 'toggle-auto-answer' }); }
+    catch (error) { toast(error.message); }
+  }
+}
+
+async function loadDesktopSignalInfo() {
+  if (!window.desktopBridge) return;
+  try {
+    const info = await window.desktopBridge.getSignalInfo();
+    $('desktop-signal').value = info.signalBase;
+    state.lanAddresses = info.lanAddresses || [];
+    $('desktop-lan-addresses').textContent = state.lanAddresses.length
+      ? state.lanAddresses.map(item => item.url).join('\n')
+      : '未检测到局域网 IPv4 地址';
+    $('desktop-lan-info').hidden = false;
+  } catch (error) { toast('读取局域网配对地址失败：' + error.message); }
+}
+
 async function startDesktop() {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     toast('当前浏览器不支持屏幕分享，请使用桌面 Chromium 浏览器');
@@ -90,7 +120,7 @@ async function startDesktop() {
   try {
     const display = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 12, max: 20 } },
-      audio: true,
+      audio: $('capture-system-audio').checked,
     });
     state.displayStream = display;
     $('local-preview').srcObject = display;
@@ -342,6 +372,12 @@ $('copy-code').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(state.room || ''); toast('房间码已复制'); }
   catch { toast('复制失败，请手动输入房间码'); }
 });
+$('copy-lan-url').addEventListener('click', async () => {
+  const address = state.lanAddresses[0]?.url;
+  if (!address) return toast('未检测到可用的局域网地址');
+  try { await navigator.clipboard.writeText(address); toast('手机信令地址已复制'); }
+  catch { toast('复制失败，请手动选择地址'); }
+});
 $('mobile-connect').addEventListener('submit', async event => {
   event.preventDefault();
   const room = $('mobile-room').value.trim().toUpperCase();
@@ -420,23 +456,23 @@ $('mobile-signal').value = saved.signalBase || defaultBase;
 $('desktop-signal').value = saved.signalBase || defaultBase;
 $('llm-endpoint').value = saved.endpoint || 'https://api.openai.com/v1/chat/completions';
 $('llm-model').value = saved.model || 'gpt-4o-mini';
+void loadDesktopSignalInfo();
 $('desktop-signal').addEventListener('change', () => {
   try { localStorage.setItem(preferenceKey, JSON.stringify({ ...saved, signalBase: $('desktop-signal').value.trim(), endpoint: $('llm-endpoint').value, model: $('llm-model').value })); } catch { /* private browsing */ }
 });
 
-document.addEventListener('keydown', event => {
+function handleDesktopKeydown(event) {
   if (state.role !== 'desktop' || event.repeat || !event.altKey || !event.shiftKey) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
   const key = event.key.toLowerCase();
-  if (key === 's' && state.displayStream) { event.preventDefault(); takeScreenshot(); }
-  if (key === 'm' && state.displayStream) { event.preventDefault(); state.voiceActive ? stopVoice(true) : startVoice(); }
-  if (key === 'a' && state.displayStream) {
-    event.preventDefault();
-    try { state.peer.send({ type: 'control', action: 'toggle-auto-answer' }); }
-    catch (error) { toast(error.message); }
-  }
-});
+  if (key === 's') dispatchDesktopHotkey('screenshot');
+  if (key === 'm') dispatchDesktopHotkey('voice');
+  if (key === 'a') dispatchDesktopHotkey('auto-answer');
+}
+if (window.desktopBridge) window.desktopBridge.onShortcut(dispatchDesktopHotkey);
+else document.addEventListener('keydown', handleDesktopKeydown);
+if (initialRole !== state.role) setRole(initialRole);
 window.addEventListener('beforeunload', () => {
   state.peer?.disconnect();
   state.outgoingStream?.getTracks().forEach(track => track.stop());

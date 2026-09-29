@@ -41,11 +41,27 @@ flowchart TD
   N --> P[手机展示答复并通过 P2P 同步桌面]
 ```
 
+## 原生打包工作流
+
+```mermaid
+flowchart LR
+  SRC[共享 Web 源码] --> DIST[Vite dist 资源]
+  DIST --> EXE[Electron Windows portable EXE]
+  EXE --> SIG[EXE 内嵌 LAN 信令服务]
+  DIST --> APK[Capacitor Android debug APK]
+  APK -->|可信局域网 HTTP/WS| SIG
+  EXE <-->|WebRTC 直连媒体与 DataChannel| APK
+```
+
 ## 仓库结构
 
 ```text
 p2p-meeting-copilot/
-├─ docs/ (部署、计划、进度、流程)
+├─ docs/ (部署、计划、进度、流程、打包)
+├─ electron/ (Windows portable app 与安全 preload)
+├─ capacitor.config.json (Android WebView 设置)
+├─ scripts/ (原生工程准备与 APK 构建)
+├─ .github/workflows/package-release.yml
 ├─ server/signaling.js      # 临时信令，仅转发 SDP/ICE
 ├─ src/main.js              # 双端 UI、采集快捷键、请求编排
 ├─ src/peer-session.js      # WebRTC / RTCDataChannel

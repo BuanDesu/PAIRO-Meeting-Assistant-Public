@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { askModel } from '../src/llm.js';
+import { askModel, requestModel } from '../src/llm.js';
 
 test('sends text and screenshot to the configured compatible API', async t => {
   const original = globalThis.fetch;
@@ -32,4 +32,21 @@ test('rejects a cleartext remote endpoint before sending the key', async t => {
     askModel({ endpoint: 'http://llm.example/v1/chat/completions', apiKey: 'secret', model: 'm', question: 'q' }),
     /HTTPS/,
   );
+});
+
+
+test('uses Capacitor native HTTP on Android instead of browser fetch', async () => {
+  let sent;
+  const response = await requestModel({
+    url: 'https://llm.example/v1/chat/completions',
+    headers: { Authorization: 'Bearer temporary-test-key' },
+    body: { model: 'vision-model' },
+    isNative: true,
+    nativeHttp: { post: async options => { sent = options; return { status: 200, data: { choices: [] } }; } },
+    fetchImpl: async () => { throw new Error('browser fetch should not be used'); },
+  });
+  assert.equal(sent.url, 'https://llm.example/v1/chat/completions');
+  assert.equal(sent.data.model, 'vision-model');
+  assert.equal(response.ok, true);
+  assert.deepEqual(await response.json(), { choices: [] });
 });

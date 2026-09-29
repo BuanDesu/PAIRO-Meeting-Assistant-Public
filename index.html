@@ -39,8 +39,9 @@
                 <button class="button button-danger" id="stop-share" type="button" disabled>停止</button>
               </div>
               <div class="capture-options">
+                <label class="check-row"><input id="capture-system-audio" type="checkbox" /><span>共享系统音频</span></label>
                 <label class="check-row"><input id="capture-mic" type="checkbox" checked /><span>同时发送麦克风音频</span></label>
-                <span class="hint">屏幕系统音频取决于浏览器与共享源支持</span>
+                <span class="hint">系统音频仅在勾选后请求</span>
               </div>
               <div class="shortcut-note"><span class="shortcut-key">Alt + Shift + S</span><span>截取当前共享画面</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + M</span><span>开始 / 停止语音识别</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + A</span><span>切换手机自动回答</span></div>
             </section>
@@ -52,6 +53,7 @@
                 <div class="room-code-wrap"><div><span class="micro-label">一次性房间码</span><strong id="room-code">等待分享</strong></div><button id="copy-code" class="icon-button" type="button" aria-label="复制房间码" disabled>▣</button></div>
                 <label class="field-label" for="desktop-signal">信令服务地址</label><input class="text-input" id="desktop-signal" inputmode="url" autocomplete="url" />
                 <div class="connection-line"><span class="mini-dot" id="desktop-dot"></span><span id="desktop-status">尚未连接</span></div>
+                <div class="lan-info" id="desktop-lan-info" hidden><span class="micro-label">手机端信令地址（同一局域网）</span><code id="desktop-lan-addresses">启动后显示</code><button id="copy-lan-url" class="text-button" type="button">复制地址</button></div>
               </section>
               <section class="panel request-panel">
                 <div class="panel-heading"><div><span class="section-kicker">INCOMING</span><h2>最近的问题</h2></div><span class="counter" id="request-count">0</span></div>
@@ -74,7 +76,7 @@
               <section class="panel connect-panel">
                 <div class="panel-heading"><div><span class="section-kicker">CONNECT</span><h2>配对桌面</h2></div><span class="step-mark">01</span></div>
                 <form id="mobile-connect" class="connect-form">
-                  <label class="field-label" for="mobile-signal">信令服务地址</label><input class="text-input" id="mobile-signal" inputmode="url" autocomplete="url" required />
+                  <label class="field-label" for="mobile-signal">信令服务地址</label><input class="text-input" id="mobile-signal" inputmode="url" autocomplete="url" placeholder="http://电脑局域网IP:端口" required />
                   <label class="field-label" for="mobile-room">桌面房间码</label><div class="input-action"><input class="text-input room-input" id="mobile-room" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="例如 8J4K7M2P" required /><button class="button button-primary" type="submit" id="join-room">连接</button></div>
                 </form>
                 <div class="connection-line"><span class="mini-dot" id="mobile-dot"></span><span id="mobile-status">尚未连接</span></div>

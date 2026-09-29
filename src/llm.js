@@ -1,3 +1,13 @@
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+
+export async function requestModel({ url, headers, body, isNative = Capacitor.isNativePlatform(), nativeHttp = CapacitorHttp, fetchImpl = globalThis.fetch }) {
+  if (isNative) {
+    const result = await nativeHttp.post({ url: String(url), headers, data: body, responseType: 'json' });
+    return { ok: result.status >= 200 && result.status < 300, status: result.status, json: async () => result.data };
+  }
+  return fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body) });
+}
+
 export async function askModel({ endpoint, apiKey, model, question, imageDataUrl, history = [] }) {
   if (!apiKey?.trim()) throw new Error('请先填写手机端 API Key');
   if (!endpoint?.trim()) throw new Error('请填写 Chat Completions API 地址');
@@ -13,15 +23,14 @@ export async function askModel({ endpoint, apiKey, model, question, imageDataUrl
     ...history.slice(-8),
     { role: 'user', content: userContent },
   ];
+  const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey.trim() };
+  const body = { model: model.trim(), messages, temperature: 0.3 };
   let response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey.trim() },
-      body: JSON.stringify({ model: model.trim(), messages, temperature: 0.3 }),
-    });
+    response = await requestModel({ url, headers, body });
   } catch (error) {
-    throw new Error('无法访问模型服务：' + error.message + '。请检查网络、CORS 与 API 地址。');
+    const hint = Capacitor.isNativePlatform() ? '请检查网络与 API 地址。' : '请检查网络、CORS 与 API 地址。';
+    throw new Error('无法访问模型服务：' + error.message + '。' + hint);
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {

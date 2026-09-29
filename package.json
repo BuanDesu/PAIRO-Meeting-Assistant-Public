@@ -3,17 +3,44 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "signal": "node server/signaling.js",
+    "desktop": "npm run build && electron .",
+    "desktop:portable": "npm run build && node scripts/build-desktop.mjs",
+    "android:sync": "npm run build && node scripts/prepare-android.mjs",
+    "android:apk": "npm run android:sync && node scripts/build-android.mjs",
     "test": "node --test"
   },
   "dependencies": {
+    "@capacitor/core": "^8.5.2",
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3",
     "vite": "^6.3.5"
+  },
+  "build": {
+    "appId": "com.pairo.meetingcopilot",
+    "productName": "Pairo Meeting Copilot",
+    "asar": false,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "server/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false
+    }
   }
 }
