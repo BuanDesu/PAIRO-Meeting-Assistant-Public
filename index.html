@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#080d18" />
+    <meta name="description" content="通过 WebRTC 将桌面屏幕与会议问题安全直连到手机 AI 助手。" />
+    <title>P2P Meeting Copilot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="P2P Meeting Copilot 首页"><span class="brand-mark">P</span><span><strong>PAIRO</strong><small>MEETING COPILOT</small></span></a>
+        <div class="top-center"><span class="live-dot"></span><span id="top-status">尚未连接</span></div>
+        <div class="mode-switch" role="tablist" aria-label="选择设备角色">
+          <button class="mode-tab active" id="desktop-tab" type="button" role="tab" aria-selected="true">桌面端</button>
+          <button class="mode-tab" id="mobile-tab" type="button" role="tab" aria-selected="false">手机端</button>
+        </div>
+      </header>
+
+      <main id="top">
+        <section class="role-view" id="desktop-view">
+          <div class="intro-row">
+            <div><div class="eyebrow">01 / DESKTOP NODE</div><h1>把问题，<em>送到手机。</em></h1><p>开启屏幕分享后，用快捷键截屏或语音转写。媒体与请求通过加密 WebRTC 直连，不经过信令服务器。</p></div>
+            <div class="privacy-chip"><span class="lock-icon">◇</span><span>仅在你授权时采集</span></div>
+          </div>
+          <div class="desktop-grid">
+            <section class="panel feed-panel">
+              <div class="panel-heading"><div><span class="section-kicker">LIVE FEED</span><h2>桌面画面</h2></div><span class="status-pill" id="desktop-feed-status">未分享</span></div>
+              <div class="screen-frame" id="local-frame">
+                <video id="local-preview" autoplay muted playsinline></video>
+                <div class="screen-empty" id="local-empty"><div class="screen-glyph">▣</div><strong>屏幕预览将在这里出现</strong><span>点击下方按钮并选择要分享的窗口或屏幕</span></div>
+                <div class="frame-corner corner-tl"></div><div class="frame-corner corner-br"></div>
+              </div>
+              <div class="feed-controls">
+                <button class="button button-primary" id="start-share" type="button"><span>◉</span> 开始屏幕分享</button>
+                <button class="button button-quiet" id="take-shot" type="button" disabled>⌗ 截图 <kbd>Alt ⇧ S</kbd></button>
+                <button class="button button-quiet" id="toggle-voice" type="button" disabled>◖ 语音提问 <kbd>Alt ⇧ M</kbd></button>
+                <button class="button button-danger" id="stop-share" type="button" disabled>停止</button>
+              </div>
+              <div class="capture-options">
+                <label class="check-row"><input id="capture-mic" type="checkbox" checked /><span>同时发送麦克风音频</span></label>
+                <span class="hint">屏幕系统音频取决于浏览器与共享源支持</span>
+              </div>
+              <div class="shortcut-note"><span class="shortcut-key">Alt + Shift + S</span><span>截取当前共享画面</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + M</span><span>开始 / 停止语音识别</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + A</span><span>切换手机自动回答</span></div>
+            </section>
+
+            <aside class="side-stack">
+              <section class="panel pairing-panel">
+                <div class="panel-heading"><div><span class="section-kicker">PAIRING</span><h2>连接手机</h2></div><span class="step-mark">01</span></div>
+                <p class="panel-copy">开始分享后，桌面端会生成一次性房间码。在手机端输入它即可配对。</p>
+                <div class="room-code-wrap"><div><span class="micro-label">一次性房间码</span><strong id="room-code">等待分享</strong></div><button id="copy-code" class="icon-button" type="button" aria-label="复制房间码" disabled>▣</button></div>
+                <label class="field-label" for="desktop-signal">信令服务地址</label><input class="text-input" id="desktop-signal" inputmode="url" autocomplete="url" />
+                <div class="connection-line"><span class="mini-dot" id="desktop-dot"></span><span id="desktop-status">尚未连接</span></div>
+              </section>
+              <section class="panel request-panel">
+                <div class="panel-heading"><div><span class="section-kicker">INCOMING</span><h2>最近的问题</h2></div><span class="counter" id="request-count">0</span></div>
+                <div class="empty-note" id="desktop-question-empty">等待手机端配对与问题转写…</div>
+                <div class="transcript-item" id="desktop-question" hidden></div>
+                <div class="answer-box"><span class="micro-label">手机 AI 回复</span><p id="desktop-answer">配对后，手机端生成的答案会同步到这里。</p></div>
+              </section>
+              <div class="notice notice-subtle"><span>ⓘ</span><p>浏览器语音识别可能使用在线服务；仅在会议规则允许时启用，并避免采集敏感内容。</p></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="role-view" id="mobile-view" hidden>
+          <div class="intro-row mobile-intro">
+            <div><div class="eyebrow">02 / MOBILE NODE</div><h1>看见桌面，<em>即刻作答。</em></h1><p>连接桌面节点，查看实时画面与音频；将截图或转写问题交给你配置的模型。</p></div>
+            <div class="privacy-chip"><span class="lock-icon">◇</span><span>API Key 仅保存在此页面内存</span></div>
+          </div>
+          <div class="mobile-grid">
+            <div class="mobile-left">
+              <section class="panel connect-panel">
+                <div class="panel-heading"><div><span class="section-kicker">CONNECT</span><h2>配对桌面</h2></div><span class="step-mark">01</span></div>
+                <form id="mobile-connect" class="connect-form">
+                  <label class="field-label" for="mobile-signal">信令服务地址</label><input class="text-input" id="mobile-signal" inputmode="url" autocomplete="url" required />
+                  <label class="field-label" for="mobile-room">桌面房间码</label><div class="input-action"><input class="text-input room-input" id="mobile-room" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="例如 8J4K7M2P" required /><button class="button button-primary" type="submit" id="join-room">连接</button></div>
+                </form>
+                <div class="connection-line"><span class="mini-dot" id="mobile-dot"></span><span id="mobile-status">尚未连接</span></div>
+                <button id="leave-room" class="button button-quiet leave-room" type="button" hidden>断开当前房间</button>
+              </section>
+              <section class="panel monitor-panel">
+                <div class="panel-heading"><div><span class="section-kicker">DESKTOP MONITOR</span><h2>实时桌面</h2></div><button id="enable-audio" class="text-button" type="button">开启声音</button></div>
+                <div class="screen-frame remote-frame">
+                  <video id="remote-preview" autoplay muted playsinline></video>
+                  <div class="screen-empty" id="remote-empty"><div class="screen-glyph">◌</div><strong>等待桌面画面</strong><span>连接后实时接收，不在信令服务器留存</span></div>
+                </div>
+                <audio id="remote-audio" autoplay controls></audio>
+                <div class="monitor-foot"><span><span class="mini-dot"></span> WebRTC 加密媒体</span><span id="media-hint">音频需点击开启</span></div>
+              </section>
+            </div>
+
+            <div class="mobile-right">
+              <section class="panel model-panel">
+                <div class="panel-heading"><div><span class="section-kicker">MODEL SETUP</span><h2>模型配置</h2></div><span class="step-mark">02</span></div>
+                <div class="form-grid">
+                  <div class="span-two"><label class="field-label" for="llm-endpoint">OpenAI-compatible API 地址</label><input class="text-input" id="llm-endpoint" type="url" placeholder="https://api.example.com/v1/chat/completions" /></div>
+                  <div><label class="field-label" for="llm-model">模型名称</label><input class="text-input" id="llm-model" placeholder="gpt-4o-mini" /></div>
+                  <div><label class="field-label" for="llm-key">API Key</label><input class="text-input" id="llm-key" type="password" autocomplete="off" placeholder="仅本次页面会话使用" /></div>
+                </div>
+                <div class="model-actions"><label class="check-row"><input id="auto-answer" type="checkbox" /><span>收到问题后自动请求模型</span></label><span class="save-hint" id="config-hint">Key 不会保存或发送给信令服务</span></div>
+              </section>
+              <section class="panel conversation-panel">
+                <div class="panel-heading"><div><span class="section-kicker">COPILOT</span><h2>问题与回答</h2></div><button class="text-button" id="clear-chat" type="button">清空</button></div>
+                <div class="attachment-strip" id="attachment-strip" hidden><img id="attachment-thumb" alt="最近收到的桌面截图" /><div><span class="micro-label">已附加桌面截图</span><span class="attachment-caption">可在提问时一并发送给模型</span></div><button id="remove-attachment" class="icon-button" type="button" aria-label="移除截图">×</button></div>
+                <div class="message-list" id="message-list" aria-live="polite"><div class="conversation-empty" id="conversation-empty"><span class="empty-orbit">✳</span><strong>准备好接收桌面请求</strong><p>截图与转写文本会显示在这里。你也可以直接输入问题。</p></div></div>
+                <form id="composer" class="composer"><textarea id="question-input" rows="2" placeholder="输入问题，或等待桌面端快捷键…" aria-label="输入问题"></textarea><button class="send-button" id="send-button" type="submit" aria-label="发送问题">↑</button></form>
+                <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button id="speak-answer" type="button" class="text-button">朗读最近答复</button></div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer class="app-footer"><span>PAIRO <span class="footer-dot">·</span> P2P MEETING COPILOT</span><span>屏幕与音频直连；信令仅转发协商信息</span><a href="./docs/PROJECT_FLOW.md" target="_blank" rel="noreferrer">查看项目流程</a></footer>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
