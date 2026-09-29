@@ -107,6 +107,7 @@ export class PeerSession {
       this.pendingCandidates = [];
       this.offerPending = false;
       this.remoteStream = new MediaStream();
+      this.onStream(this.remoteStream);
       this.onStatus('对端已离开房间');
       return;
     }

@@ -48,7 +48,7 @@ npm run dev -- --host 0.0.0.0
 
 ## 检查
 
-- npm test：WebSocket 信令房间与消息转发集成测试。
+- npm test：7 项自动化测试，覆盖信令、API 请求、URL 安全与 UI 选择器契约。
 - npm run build：Vite 生产构建。
 
 查看 docs/PROJECT_PROGRESS.md、docs/PROJECT_FLOW.md、docs/DEPLOYMENT.md 与 docs/PLAN.md。
