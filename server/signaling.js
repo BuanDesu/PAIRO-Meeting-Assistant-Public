@@ -8,6 +8,22 @@ const MAX_PAYLOAD = 256 * 1024;
 const DEFAULT_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
 const ALLOWED_TYPES = new Set(['offer', 'answer', 'candidate']);
 
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validNegotiation(message, role) {
+  if (!ALLOWED_TYPES.has(message.type) || !isRecord(message.payload)) return false;
+  const payload = message.payload;
+  if (message.type === 'candidate') {
+    return typeof payload.candidate === 'string' && payload.candidate.length <= 8192
+      && (payload.sdpMid == null || typeof payload.sdpMid === 'string')
+      && (payload.sdpMLineIndex == null || (Number.isInteger(payload.sdpMLineIndex) && payload.sdpMLineIndex >= 0));
+  }
+  return message.type === (role === 'desktop' ? 'offer' : 'answer')
+    && payload.type === message.type && typeof payload.sdp === 'string' && payload.sdp.length > 0;
+}
+
 function sendJson(socket, value) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value));
 }
@@ -73,6 +89,8 @@ export function createSignalingServer({ iceServers, allowedOrigins = process.env
   wss.on('connection', ws => {
     const meta = { room: null, role: null, windowStart: Date.now(), count: 0 };
     sockets.set(ws, meta);
+    // Receiver errors (including maxPayload violations) occur before the message event.
+    ws.on('error', () => ws.terminate());
     ws.on('message', raw => {
       if (raw.length > MAX_PAYLOAD) {
         sendJson(ws, { type: 'error', message: '消息超过大小限制' });
@@ -92,6 +110,10 @@ export function createSignalingServer({ iceServers, allowedOrigins = process.env
       let message;
       try { message = JSON.parse(raw.toString()); } catch {
         sendJson(ws, { type: 'error', message: '无效 JSON' });
+        return;
+      }
+      if (!isRecord(message)) {
+        sendJson(ws, { type: 'error', message: '消息必须是 JSON 对象' });
         return;
       }
       if (!meta.room) {
@@ -118,7 +140,7 @@ export function createSignalingServer({ iceServers, allowedOrigins = process.env
         }
         return;
       }
-      if (!ALLOWED_TYPES.has(message.type) || !message.payload || typeof message.payload !== 'object') {
+      if (!validNegotiation(message, meta.role)) {
         sendJson(ws, { type: 'error', message: '仅允许转发 SDP 与 ICE 协商消息' });
         return;
       }

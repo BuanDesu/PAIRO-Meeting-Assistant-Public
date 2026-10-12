@@ -50,3 +50,33 @@ test('uses Capacitor native HTTP on Android instead of browser fetch', async () 
   assert.equal(response.ok, true);
   assert.deepEqual(await response.json(), { choices: [] });
 });
+
+test('cancels native requests even if the native provider returns late', async () => {
+  const controller = new AbortController();
+  let finish;
+  const request = requestModel({ url: 'https://llm.example', body: {}, headers: {}, signal: controller.signal,
+    isNative: true, nativeHttp: { post: () => new Promise(resolve => { finish = resolve; }) } });
+  controller.abort();
+  await assert.rejects(request, { name: 'AbortError' });
+  finish({ status: 200, data: {} });
+});
+
+test('times out browser requests and rejects pre-cancelled requests without sending keys', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = (_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(options.signal.reason)));
+  await assert.rejects(askModel({ endpoint: 'https://llm.example', apiKey: 'test', model: 'm', question: 'q', timeoutMs: 10 }), /超时/);
+  const controller = new AbortController(); controller.abort();
+  globalThis.fetch = () => { throw new Error('must not send'); };
+  await assert.rejects(askModel({ endpoint: 'https://llm.example', apiKey: 'test', model: 'm', signal: controller.signal }), { name: 'AbortError' });
+});
+
+test('reports timeout when the provider stalls after response headers', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async (_url, { signal }) => ({
+    ok: true,
+    json: () => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason))),
+  });
+  await assert.rejects(askModel({ endpoint: 'https://llm.example', apiKey: 'test', model: 'm', timeoutMs: 10 }), /超时/);
+});

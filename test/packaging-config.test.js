@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { desktopBuildOptions } from '../scripts/desktop-config.mjs';
 
 test('defines portable Windows and Capacitor Android outputs', async () => {
   const [pkgText, capacitorText, viteText, androidBuild, desktopBuild, portableScript] = await Promise.all([
@@ -16,7 +17,10 @@ test('defines portable Windows and Capacitor Android outputs', async () => {
   assert.equal(pkg.main, 'electron/main.cjs');
   assert.equal(pkg.build.win.signAndEditExecutable, false);
   assert.match(pkg.scripts['desktop:portable'], /build-desktop/);
-  assert.match(desktopBuild, /--dir/);
+  const options = desktopBuildOptions(pkg, 'verified-electron.zip', '/project');
+  assert.equal(options.projectDir, '/project');
+  assert.equal(options.config.electronDist, 'verified-electron.zip');
+  assert.deepEqual([...options.targets.values()].map(targets => [...targets.values()]), [[['dir']]]);
   assert.match(portableScript, /PORTABLE_EXECUTABLE_DIR/);
   assert.match(pkg.scripts['android:apk'], /build-android/);
   assert.match(androidBuild, /assembleDebug/);

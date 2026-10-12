@@ -9,6 +9,8 @@ const state = {
   role: 'desktop', peer: null, displayStream: null, outgoingStream: null, recognition: null,
   voiceActive: false, voiceBuffer: '', voiceTimer: null, requestCount: 0,
   latestImage: '', chatHistory: [], lastAnswer: '', toastTimer: null, lanAddresses: [],
+  captureGeneration: 0, modelGeneration: 0, modelControllers: new Set(),
+  modelQueue: Promise.resolve(), modelPending: 0, nativeSignalBase: '',
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
@@ -25,12 +27,45 @@ function readPreferences() {
   try { return JSON.parse(localStorage.getItem(preferenceKey) || '{}'); } catch { return {}; }
 }
 function savePreferences() {
+  const signalBase = $(state.role === 'desktop' ? 'desktop-signal' : 'mobile-signal').value.trim();
   const preferences = {
-    signalBase: $('mobile-signal').value.trim(),
+    signalBase: window.desktopBridge && signalBase === state.nativeSignalBase ? '' : signalBase,
     endpoint: $('llm-endpoint').value.trim(),
     model: $('llm-model').value.trim(),
   };
   try { localStorage.setItem(preferenceKey, JSON.stringify(preferences)); } catch { /* private browsing */ }
+  window.desktopBridge?.writePreferences(preferences).catch(() => toast('设置保存失败，请检查配置目录权限'));
+}
+
+function resetConversation() {
+  state.modelGeneration += 1;
+  for (const controller of state.modelControllers) controller.abort();
+  state.modelControllers.clear();
+  state.modelQueue = Promise.resolve();
+  state.modelPending = 0;
+  state.latestImage = '';
+  state.chatHistory = [];
+  state.lastAnswer = '';
+  $('send-button').disabled = false;
+  $('message-list').querySelectorAll('.chat-message').forEach(node => node.remove());
+  $('conversation-empty').hidden = false;
+  $('attachment-strip').hidden = true;
+  $('attachment-thumb').removeAttribute('src');
+  $('desktop-answer').textContent = '';
+  $('desktop-question').textContent = '';
+  $('desktop-question').hidden = true;
+  $('desktop-question-empty').hidden = false;
+  if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+}
+
+function resetMobileMedia() {
+  $('join-room').disabled = false;
+  $('leave-room').hidden = true;
+  $('remote-preview').srcObject = null;
+  $('remote-audio').srcObject = null;
+  $('remote-preview').classList.remove('visible');
+  $('remote-empty').hidden = false;
+  $('media-hint').textContent = '音频需点击开启';
 }
 function toast(message) {
   const node = $('toast');
@@ -49,8 +84,8 @@ function setStatus(role, message, connected = false) {
 }
 function setRole(role) {
   if (state.role === role) return;
-  if (state.peer || state.displayStream) stopDesktop(false);
-  if (role === 'desktop' && state.peer) state.peer.disconnect();
+  stopDesktop(false);
+  resetMobileMedia();
   state.role = role;
   $('desktop-view').hidden = role !== 'desktop';
   $('mobile-view').hidden = role !== 'mobile';
@@ -79,21 +114,23 @@ function makePeer(role) {
   const peer = new PeerSession({
     role,
     onStatus: message => {
+      if (state.peer !== peer) return;
       setStatus(role, message, message.includes('P2P 已加密直连'));
       if (role === 'mobile' && message.includes('P2P 已加密直连')) toast('两台设备已建立加密直连');
     },
-    onMessage: message => role === 'mobile' ? handleMobileMessage(message) : handleDesktopMessage(message),
-    onStream: stream => role === 'mobile' ? attachRemoteStream(stream) : null,
+    onMessage: message => state.peer === peer ? (role === 'mobile' ? handleMobileMessage(message) : handleDesktopMessage(message)) : undefined,
+    onStream: stream => state.peer === peer && role === 'mobile' ? attachRemoteStream(stream) : null,
+    onPeerLeft: () => { if (state.peer === peer) resetConversation(); },
   });
   return peer;
 }
 
-function dispatchDesktopHotkey(action) {
+async function dispatchDesktopHotkey(action) {
   if (state.role !== 'desktop' || !state.displayStream) return;
   if (action === 'screenshot') takeScreenshot();
   if (action === 'voice') state.voiceActive ? stopVoice(true) : startVoice();
   if (action === 'auto-answer') {
-    try { state.peer.send({ type: 'control', action: 'toggle-auto-answer' }); }
+    try { await state.peer.send({ type: 'control', action: 'toggle-auto-answer' }); }
     catch (error) { toast(error.message); }
   }
 }
@@ -102,7 +139,12 @@ async function loadDesktopSignalInfo() {
   if (!window.desktopBridge) return;
   try {
     const info = await window.desktopBridge.getSignalInfo();
-    $('desktop-signal').value = info.signalBase;
+    state.nativeSignalBase = info.signalBase;
+    const preferences = await window.desktopBridge.readPreferences();
+    if ($('desktop-signal').value === (saved.signalBase || defaultBase)) $('desktop-signal').value = preferences.signalBase || info.signalBase;
+    if ($('mobile-signal').value === (saved.signalBase || defaultBase)) $('mobile-signal').value = preferences.signalBase || info.signalBase;
+    if ($('llm-endpoint').value === (saved.endpoint || 'https://api.openai.com/v1/chat/completions')) $('llm-endpoint').value = preferences.endpoint || $('llm-endpoint').value;
+    if ($('llm-model').value === (saved.model || 'gpt-4o-mini')) $('llm-model').value = preferences.model || $('llm-model').value;
     state.lanAddresses = info.lanAddresses || [];
     $('desktop-lan-addresses').textContent = state.lanAddresses.length
       ? state.lanAddresses.map(item => item.url).join('\n')
@@ -117,35 +159,45 @@ async function startDesktop() {
     return;
   }
   $('start-share').disabled = true;
+  const generation = ++state.captureGeneration;
+  const current = () => state.role === 'desktop' && generation === state.captureGeneration;
+  let peer;
   try {
     const display = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 12, max: 20 } },
       audio: $('capture-system-audio').checked,
     });
+    if (!current()) { display.getTracks().forEach(track => track.stop()); return; }
     state.displayStream = display;
+    display.getVideoTracks()[0].addEventListener('ended', () => { if (current()) stopDesktop(true); }, { once: true });
+    $('stop-share').disabled = false;
     $('local-preview').srcObject = display;
     const tracks = [...display.getTracks()];
     if ($('capture-mic').checked) {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        if (!current()) { mic.getTracks().forEach(track => track.stop()); return; }
         tracks.push(...mic.getAudioTracks());
         mic.getVideoTracks().forEach(track => track.stop());
       } catch (error) {
+        if (!current()) return;
         toast('未启用麦克风：' + (error.name === 'NotAllowedError' ? '权限被拒绝' : '设备不可用'));
       }
     }
+    if (!current()) return;
     state.outgoingStream = new MediaStream(tracks);
     state.room = randomRoomCode();
     $('room-code').textContent = state.room;
     $('copy-code').disabled = false;
-    state.peer = makePeer('desktop');
-    state.peer.setLocalStream(state.outgoingStream);
-    await state.peer.connect($('desktop-signal').value, state.room);
+    state.peer = peer = makePeer('desktop');
+    peer.setLocalStream(state.outgoingStream);
+    await peer.connect($('desktop-signal').value, state.room);
+    if (!current() || state.peer !== peer) { peer.disconnect(); return; }
     setFeedActive(true);
     $('desktop-feed-status').textContent = '等待手机配对';
-    display.getVideoTracks()[0].addEventListener('ended', () => stopDesktop(true), { once: true });
     toast('房间码已生成，请在手机端输入');
   } catch (error) {
+    if (!current()) { peer?.disconnect(); return; }
     if (state.displayStream) stopDesktop(false);
     else $('start-share').disabled = false;
     setStatus('desktop', error.message || '无法开启屏幕分享');
@@ -154,10 +206,12 @@ async function startDesktop() {
 }
 
 function stopDesktop(showToast = true) {
+  state.captureGeneration += 1;
+  resetConversation();
   stopVoice(false);
   if (state.peer) state.peer.disconnect();
   state.peer = null;
-  for (const track of state.outgoingStream?.getTracks() || []) track.stop();
+  for (const track of new Set([...(state.outgoingStream?.getTracks() || []), ...(state.displayStream?.getTracks() || [])])) track.stop();
   state.displayStream = null;
   state.outgoingStream = null;
   $('local-preview').srcObject = null;
@@ -168,7 +222,7 @@ function stopDesktop(showToast = true) {
   if (showToast) toast('桌面分享已停止');
 }
 
-function takeScreenshot() {
+async function takeScreenshot() {
   const video = $('local-preview');
   if (!video.videoWidth || !video.videoHeight) return toast('画面尚未准备好，请稍后重试');
   try {
@@ -180,7 +234,7 @@ function takeScreenshot() {
     canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
     const image = canvas.toDataURL('image/jpeg', 0.74);
     if (image.length > 3_500_000) return toast('截图仍然过大，请缩小窗口后重试');
-    state.peer.send({ type: 'screenshot', image, width: canvas.width, height: canvas.height, at: Date.now() });
+    await state.peer.send({ type: 'screenshot', image, width: canvas.width, height: canvas.height, at: Date.now() });
     toast('截图已加密发送到手机');
   } catch (error) {
     toast(error.message || '截图发送失败，请确认手机已连接');
@@ -245,13 +299,13 @@ function stopVoice(sendRemainder = true) {
   $('toggle-voice').firstChild.textContent = '◖ 语音提问 ';
   if (sendRemainder) sendRecognizedQuestion();
 }
-function sendRecognizedQuestion() {
+async function sendRecognizedQuestion() {
   clearTimeout(state.voiceTimer);
   const text = state.voiceBuffer.trim();
   state.voiceBuffer = '';
   if (!text) return;
   try {
-    state.peer.send({ type: 'request', text, at: Date.now() });
+    await state.peer.send({ type: 'request', text, at: Date.now() });
     $('desktop-question-empty').hidden = true;
     $('desktop-question').hidden = false;
     $('desktop-question').textContent = text;
@@ -273,6 +327,7 @@ function attachRemoteStream(stream) {
   const audio = $('remote-audio');
   if (video.srcObject !== stream) video.srcObject = stream;
   const audioTracks = stream.getAudioTracks();
+  if (!audioTracks.length) audio.srcObject = null;
   if (audioTracks.length && audio.srcObject?.getTracks?.()[0]?.id !== audioTracks[0].id) audio.srcObject = new MediaStream(audioTracks);
   const hasVideo = stream.getVideoTracks().some(track => track.readyState === 'live');
   $('remote-empty').hidden = hasVideo;
@@ -308,14 +363,15 @@ function setLatestImage(image) {
   $('attachment-thumb').src = image;
   $('attachment-strip').hidden = false;
 }
-function handleMobileMessage(message) {
+async function handleMobileMessage(message) {
   if (message.type === 'control' && message.action === 'toggle-auto-answer') {
     $('auto-answer').checked = !$('auto-answer').checked;
-    state.peer.send({ type: 'control-state', enabled: $('auto-answer').checked });
+    await state.peer.send({ type: 'control-state', enabled: $('auto-answer').checked });
     toast('桌面快捷键已' + ($('auto-answer').checked ? '开启' : '关闭') + '自动回答');
     return;
   }
   if (message.type === 'screenshot') {
+    if (typeof message.image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/i.test(message.image)) return;
     setLatestImage(message.image);
     addChatMessage('incoming', '收到桌面截图', message.image);
     if ($('auto-answer').checked) submitQuestion('请分析这张桌面截图中的问题，并给出简洁、准确的建议。', message.image);
@@ -342,24 +398,41 @@ async function submitQuestion(question, image = state.latestImage) {
     return;
   }
   savePreferences();
+  if (state.modelPending >= 8) return toast('模型请求队列已满，请稍后重试');
+  const generation = state.modelGeneration;
+  const peer = state.peer;
+  const current = () => generation === state.modelGeneration && state.peer === peer;
+  const controller = new AbortController();
+  state.modelControllers.add(controller);
+  state.modelPending += 1;
   const pending = addChatMessage('system', '正在请求模型…');
   $('send-button').disabled = true;
-  try {
-    const answer = await askModel({ endpoint, apiKey: key, model, question: actualQuestion, imageDataUrl: image, history: state.chatHistory });
-    pending.remove();
-    addChatMessage('answer', answer);
-    state.lastAnswer = answer;
-    state.chatHistory.push({ role: 'user', content: actualQuestion }, { role: 'assistant', content: answer });
-    state.chatHistory = state.chatHistory.slice(-8);
-    if (state.peer) {
-      try { state.peer.send({ type: 'answer', text: answer, at: Date.now() }); } catch { /* showing it on the phone is still useful */ }
+  const request = state.modelQueue.catch(() => {}).then(async () => {
+    if (!current()) return;
+    try {
+      const answer = await askModel({ endpoint, apiKey: key, model, question: actualQuestion, imageDataUrl: image, history: state.chatHistory, signal: controller.signal });
+      if (!current()) return;
+      pending.remove();
+      addChatMessage('answer', answer);
+      state.lastAnswer = answer;
+      state.chatHistory.push({ role: 'user', content: actualQuestion }, { role: 'assistant', content: answer });
+      state.chatHistory = state.chatHistory.slice(-8);
+      if (peer) {
+        try { await peer.send({ type: 'answer', text: answer, at: Date.now() }); } catch { /* showing it on the phone is still useful */ }
+      }
+    } catch (error) {
+      pending.remove();
+      if (current() && !controller.signal.aborted) addChatMessage('system', error.message || '模型请求失败');
+    } finally {
+      state.modelControllers.delete(controller);
+      if (current()) {
+        state.modelPending -= 1;
+        $('send-button').disabled = state.modelPending > 0;
+      }
     }
-  } catch (error) {
-    pending.remove();
-    addChatMessage('system', error.message || '模型请求失败');
-  } finally {
-    $('send-button').disabled = false;
-  }
+  });
+  state.modelQueue = request;
+  return request;
 }
 
 $('desktop-tab').addEventListener('click', () => setRole('desktop'));
@@ -383,14 +456,19 @@ $('mobile-connect').addEventListener('submit', async event => {
   const room = $('mobile-room').value.trim().toUpperCase();
   if (!/^[A-Z2-9]{8,12}$/.test(room)) return toast('房间码需为 8–12 位大写字母或数字');
   if (state.peer) state.peer.disconnect();
-  state.peer = makePeer('mobile');
+  resetConversation();
+  resetMobileMedia();
+  const peer = state.peer = makePeer('mobile');
   $('join-room').disabled = true;
   try {
-    await state.peer.connect($('mobile-signal').value, room);
+    await peer.connect($('mobile-signal').value, room);
+    if (state.peer !== peer) { peer.disconnect(); return; }
     $('mobile-room').value = room;
     $('leave-room').hidden = false;
     savePreferences();
   } catch (error) {
+    peer.disconnect();
+    if (state.peer !== peer) return;
     $('join-room').disabled = false;
     $('leave-room').hidden = true;
     state.peer = null;
@@ -401,13 +479,8 @@ $('mobile-connect').addEventListener('submit', async event => {
 $('leave-room').addEventListener('click', () => {
   state.peer?.disconnect();
   state.peer = null;
-  $('join-room').disabled = false;
-  $('leave-room').hidden = true;
-  $('remote-preview').srcObject = null;
-  $('remote-audio').srcObject = null;
-  $('remote-preview').classList.remove('visible');
-  $('remote-empty').hidden = false;
-  $('media-hint').textContent = '音频需点击开启';
+  resetConversation();
+  resetMobileMedia();
   setStatus('mobile', '已断开连接');
 });
 $('enable-audio').addEventListener('click', async () => {
@@ -431,14 +504,7 @@ $('question-input').addEventListener('keydown', event => {
     $('composer').requestSubmit();
   }
 });
-$('clear-chat').addEventListener('click', () => {
-  $('message-list').querySelectorAll('.chat-message').forEach(node => node.remove());
-  $('conversation-empty').hidden = false;
-  state.chatHistory = [];
-  state.latestImage = '';
-  $('attachment-strip').hidden = true;
-  $('attachment-thumb').removeAttribute('src');
-});
+$('clear-chat').addEventListener('click', resetConversation);
 $('remove-attachment').addEventListener('click', () => {
   state.latestImage = '';
   $('attachment-strip').hidden = true;
@@ -457,9 +523,7 @@ $('desktop-signal').value = saved.signalBase || defaultBase;
 $('llm-endpoint').value = saved.endpoint || 'https://api.openai.com/v1/chat/completions';
 $('llm-model').value = saved.model || 'gpt-4o-mini';
 void loadDesktopSignalInfo();
-$('desktop-signal').addEventListener('change', () => {
-  try { localStorage.setItem(preferenceKey, JSON.stringify({ ...saved, signalBase: $('desktop-signal').value.trim(), endpoint: $('llm-endpoint').value, model: $('llm-model').value })); } catch { /* private browsing */ }
-});
+$('desktop-signal').addEventListener('change', savePreferences);
 
 function handleDesktopKeydown(event) {
   if (state.role !== 'desktop' || event.repeat || !event.altKey || !event.shiftKey) return;
@@ -474,6 +538,7 @@ if (window.desktopBridge) window.desktopBridge.onShortcut(dispatchDesktopHotkey)
 else document.addEventListener('keydown', handleDesktopKeydown);
 if (initialRole !== state.role) setRole(initialRole);
 window.addEventListener('beforeunload', () => {
+  resetConversation();
   state.peer?.disconnect();
   state.outgoingStream?.getTracks().forEach(track => track.stop());
   try { state.recognition?.stop(); } catch { /* closing */ }

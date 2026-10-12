@@ -1,3 +1,4 @@
+import { DataChannelTransport } from './data-channel.js';
 const DEFAULT_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 export function normalizeBaseUrl(value) {
@@ -17,11 +18,12 @@ export function toWebSocketUrl(baseUrl) {
 }
 
 export class PeerSession {
-  constructor({ role, onStatus = () => {}, onMessage = () => {}, onStream = () => {} }) {
+  constructor({ role, onStatus = () => {}, onMessage = () => {}, onStream = () => {}, onPeerLeft = () => {} }) {
     this.role = role;
     this.onStatus = onStatus;
     this.onMessage = onMessage;
     this.onStream = onStream;
+    this.onPeerLeft = onPeerLeft;
     this.signal = null;
     this.pc = null;
     this.channel = null;
@@ -31,6 +33,9 @@ export class PeerSession {
     this.peerPresent = false;
     this.offerPending = false;
     this.closed = false;
+    this.epoch = 0;
+    this.initializing = null;
+    this.transport = null;
   }
 
   setLocalStream(stream) {
@@ -39,6 +44,7 @@ export class PeerSession {
   }
 
   async connect(baseUrl, room) {
+    if (this.signal) this.disconnect();
     this.closed = false;
     this.baseUrl = normalizeBaseUrl(baseUrl);
     this.room = room.trim().toUpperCase();
@@ -58,9 +64,14 @@ export class PeerSession {
       timer = setTimeout(() => fail(new Error('连接信令服务超时')), 10000);
       ws.addEventListener('open', () => this.sendSignal({ type: 'join', room: this.room, role: this.role }), { once: true });
       ws.addEventListener('message', event => {
+        if (this.signal !== ws || this.closed) return;
         let message;
         try { message = JSON.parse(event.data); } catch { return; }
-        this.handleSignal(event.data).catch(error => this.onStatus('协商失败: ' + error.message));
+        if (!message || typeof message !== 'object' || Array.isArray(message)) return;
+        const epoch = this.epoch;
+        this.handleSignal(event.data).catch(error => {
+          if (!this.closed && this.signal === ws && epoch === this.epoch) this.onStatus('协商失败: ' + error.message);
+        });
         if (message.type === 'error') fail(new Error(message.message || '信令服务拒绝连接'));
         if (message.type === 'joined' && !settled) {
           settled = true;
@@ -71,18 +82,23 @@ export class PeerSession {
       ws.addEventListener('error', () => fail(new Error('无法连接信令服务，请检查地址与网络')), { once: true });
       ws.addEventListener('close', () => {
         if (!settled) fail(new Error('信令连接已关闭'));
-        if (!this.closed) this.onStatus('信令已断开');
+        if (!this.closed && this.signal === ws) {
+          this.resetPeer();
+          this.onPeerLeft();
+          this.onStatus('信令已断开');
+        }
       });
     });
   }
 
   sendSignal(message) {
-    if (this.signal?.readyState === WebSocket.OPEN) this.signal.send(JSON.stringify(message));
+    if (!this.closed && this.signal?.readyState === WebSocket.OPEN) this.signal.send(JSON.stringify(message));
   }
 
   async handleSignal(raw) {
     let message;
     try { message = JSON.parse(raw); } catch { return; }
+    if (this.closed || !message || typeof message !== 'object' || Array.isArray(message)) return;
     if (message.type === 'error') {
       this.onStatus(message.message || '信令服务拒绝连接');
       return;
@@ -101,30 +117,34 @@ export class PeerSession {
     }
     if (message.type === 'peer-left') {
       this.peerPresent = false;
-      this.pc?.close();
-      this.pc = null;
-      this.channel = null;
-      this.pendingCandidates = [];
-      this.offerPending = false;
-      this.remoteStream = new MediaStream();
-      this.onStream(this.remoteStream);
+      this.resetPeer();
+      this.onPeerLeft();
       this.onStatus('对端已离开房间');
       return;
     }
     if (message.type === 'offer') {
-      await this.ensurePeer();
-      await this.pc.setRemoteDescription(message.payload);
-      await this.flushCandidates();
-      const answer = await this.pc.createAnswer();
-      await this.pc.setLocalDescription(answer);
-      this.sendSignal({ type: 'answer', payload: this.pc.localDescription });
+      if (this.role !== 'mobile') return;
+      const pc = await this.ensurePeer();
+      if (!pc || !this.isCurrent(pc)) return;
+      await pc.setRemoteDescription(message.payload);
+      if (!this.isCurrent(pc)) return;
+      await this.flushCandidates(pc);
+      if (!this.isCurrent(pc)) return;
+      const answer = await pc.createAnswer();
+      if (!this.isCurrent(pc)) return;
+      await pc.setLocalDescription(answer);
+      if (!this.isCurrent(pc)) return;
+      this.sendSignal({ type: 'answer', payload: pc.localDescription });
       this.onStatus('已收到邀请，等待 P2P 连通…');
       return;
     }
     if (message.type === 'answer') {
-      if (!this.pc) return;
-      await this.pc.setRemoteDescription(message.payload);
-      await this.flushCandidates();
+      const pc = this.pc;
+      if (!pc || this.role !== 'desktop') return;
+      await pc.setRemoteDescription(message.payload);
+      if (!this.isCurrent(pc)) return;
+      await this.flushCandidates(pc);
+      if (!this.isCurrent(pc)) return;
       this.onStatus('已完成协商，正在打通媒体通道…');
       return;
     }
@@ -134,9 +154,9 @@ export class PeerSession {
     }
   }
 
-  async getIceServers() {
+  async getIceServers(signal) {
     try {
-      const response = await fetch(new URL('/ice-config', this.baseUrl), { cache: 'no-store' });
+      const response = await fetch(new URL('/ice-config', this.baseUrl), { cache: 'no-store', signal });
       if (response.ok) {
         const data = await response.json();
         if (Array.isArray(data.iceServers) && data.iceServers.length) return data.iceServers;
@@ -146,12 +166,38 @@ export class PeerSession {
   }
 
   async ensurePeer() {
-    if (this.pc) return;
-    this.pc = new RTCPeerConnection({ iceServers: await this.getIceServers() });
-    this.pc.onicecandidate = event => {
+    if (this.closed) return null;
+    if (this.pc) return this.pc;
+    if (this.initializing) return this.initializing.promise;
+    const epoch = this.epoch;
+    const controller = new AbortController();
+    const initialization = { controller, promise: null };
+    this.initializing = initialization;
+    initialization.promise = (async () => {
+      const timer = setTimeout(() => controller.abort(), 5000);
+      let iceServers;
+      try { iceServers = await this.getIceServers(controller.signal); }
+      finally { clearTimeout(timer); }
+      if (this.closed || this.epoch !== epoch) return null;
+      const pc = new RTCPeerConnection({ iceServers });
+      this.pc = pc;
+      this.configurePeer(pc);
+      return pc;
+    })().finally(() => {
+      if (this.initializing === initialization) this.initializing = null;
+    });
+    return initialization.promise;
+  }
+
+  isCurrent(pc) { return !this.closed && this.pc === pc; }
+
+  configurePeer(pc) {
+    pc.onicecandidate = event => {
+      if (!this.isCurrent(pc)) return;
       if (event.candidate) this.sendSignal({ type: 'candidate', payload: event.candidate });
     };
-    this.pc.ontrack = event => {
+    pc.ontrack = event => {
+      if (!this.isCurrent(pc)) return;
       const source = event.streams?.[0];
       if (source) {
         for (const track of source.getTracks()) {
@@ -162,12 +208,16 @@ export class PeerSession {
       }
       this.onStream(this.remoteStream);
     };
-    this.pc.onconnectionstatechange = () => {
-      const state = this.pc?.connectionState || 'closed';
+    pc.onconnectionstatechange = () => {
+      if (!this.isCurrent(pc)) return;
+      const state = pc.connectionState;
       this.onStatus(state === 'connected' ? 'P2P 已加密直连' : 'P2P 状态: ' + state);
     };
-    this.pc.ondatachannel = event => this.attachChannel(event.channel);
-    if (this.role === 'desktop') this.attachChannel(this.pc.createDataChannel('copilot', { ordered: true }));
+    pc.ondatachannel = event => {
+      if (this.isCurrent(pc)) this.attachChannel(event.channel, pc);
+      else event.channel.close();
+    };
+    if (this.role === 'desktop') this.attachChannel(pc.createDataChannel('copilot', { ordered: true }), pc);
     this.addLocalTracks();
   }
 
@@ -179,58 +229,77 @@ export class PeerSession {
     }
   }
 
-  attachChannel(channel) {
+  attachChannel(channel, pc = this.pc) {
+    this.transport?.dispose();
     this.channel = channel;
-    channel.onopen = () => this.onStatus('P2P 已加密直连');
-    channel.onclose = () => this.onStatus('数据通道已关闭');
-    channel.onerror = () => this.onStatus('数据通道发生错误');
+    const current = () => !this.closed && this.channel === channel && this.pc === pc;
+    const transport = this.transport = new DataChannelTransport(channel, {
+      maxMessageSize: () => pc?.sctp?.maxMessageSize ?? 65536,
+      onMessage: message => current() ? this.onMessage(message) : undefined,
+      onError: error => { if (current()) this.onStatus(error.message); },
+    });
+    channel.onopen = () => { if (current()) this.onStatus('P2P 已加密直连'); };
+    channel.onclose = () => { transport.dispose(); if (current()) this.onStatus('数据通道已关闭'); };
+    channel.onerror = () => { transport.dispose(); if (current()) this.onStatus('数据通道发生错误'); };
     channel.onmessage = event => {
-      if (typeof event.data !== 'string' || event.data.length > 4 * 1024 * 1024) {
-        this.onStatus('已丢弃过大的对端消息');
-        return;
-      }
-      try { this.onMessage(JSON.parse(event.data)); } catch { this.onStatus('收到无法识别的对端消息'); }
+      if (current()) transport.receive(event.data);
     };
   }
 
   async maybeOffer() {
     if (this.role !== 'desktop' || !this.peerPresent || !this.localStream || this.offerPending) return;
     this.offerPending = true;
+    const epoch = this.epoch;
     try {
-      await this.ensurePeer();
-      const offer = await this.pc.createOffer();
-      await this.pc.setLocalDescription(offer);
-      this.sendSignal({ type: 'offer', payload: this.pc.localDescription });
+      const pc = await this.ensurePeer();
+      if (!pc || !this.isCurrent(pc)) return;
+      const offer = await pc.createOffer();
+      if (!this.isCurrent(pc)) return;
+      await pc.setLocalDescription(offer);
+      if (!this.isCurrent(pc)) return;
+      this.sendSignal({ type: 'offer', payload: pc.localDescription });
       this.onStatus('已发送邀请，等待手机应答…');
     } catch (error) {
-      this.onStatus('建立邀请失败: ' + error.message);
+      if (!this.closed && epoch === this.epoch) this.onStatus('建立邀请失败: ' + error.message);
     } finally {
-      this.offerPending = false;
+      if (epoch === this.epoch) this.offerPending = false;
     }
   }
 
-  async flushCandidates() {
+  async flushCandidates(pc = this.pc) {
     const pending = this.pendingCandidates.splice(0);
-    for (const candidate of pending) await this.pc.addIceCandidate(candidate).catch(() => {});
+    for (const candidate of pending) {
+      if (!this.isCurrent(pc)) return;
+      await pc.addIceCandidate(candidate).catch(() => {});
+    }
   }
 
   send(message) {
-    if (this.channel?.readyState !== 'open') throw new Error('P2P 数据通道尚未就绪');
-    const payload = JSON.stringify(message);
-    if (this.channel.bufferedAmount > 4 * 1024 * 1024) throw new Error('发送队列繁忙，请稍后重试');
-    this.channel.send(payload);
+    if (!this.transport) return Promise.reject(new Error('P2P 数据通道尚未就绪'));
+    return this.transport.send(message);
+  }
+
+  resetPeer() {
+    this.epoch += 1;
+    this.initializing?.controller.abort();
+    this.initializing = null;
+    this.transport?.dispose();
+    this.transport = null;
+    this.pc?.close();
+    this.channel?.close();
+    this.pc = null;
+    this.channel = null;
+    this.peerPresent = false;
+    this.offerPending = false;
+    this.pendingCandidates = [];
+    this.remoteStream = new MediaStream();
+    this.onStream(this.remoteStream);
   }
 
   disconnect() {
     this.closed = true;
     this.signal?.close();
-    this.pc?.close();
-    this.channel?.close();
     this.signal = null;
-    this.pc = null;
-    this.channel = null;
-    this.peerPresent = false;
-    this.pendingCandidates = [];
-    this.remoteStream = new MediaStream();
+    this.resetPeer();
   }
 }

@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: choco install nsis --yes --no-progress
       - run: npm ci
+      - run: npm test
       - run: npm run desktop:portable
       - uses: actions/upload-artifact@v4
         with:
@@ -43,11 +44,17 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - run: npm ci
+      - run: npm test
       - run: npm run android:apk
+      - name: Name Android download
+        run: |
+          version=$(node -p "require('./package.json').version")
+          mkdir -p release
+          cp android/app/build/outputs/apk/debug/app-debug.apk "release/Pairo-Meeting-Copilot-${version}-android.apk"
       - uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: release/Pairo-Meeting-Copilot-*-android.apk
           if-no-files-found: error
 
   github-release:
@@ -65,8 +72,12 @@ jobs:
         with:
           name: android-debug-apk
           path: artifacts/android
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
+          name: PAIRO ${{ github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          overwrite_files: false
           files: |
             artifacts/windows/*.exe
             artifacts/android/*.apk

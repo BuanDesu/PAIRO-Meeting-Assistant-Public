@@ -2,8 +2,9 @@
 
 ## Windows portable EXE
 
-- 运行 npm run desktop:portable；electron-builder 用 --dir 生成 Windows x64 运行目录，NSIS 3.12 将其封装成单文件自解压 portable EXE，输出在 release/。无需下载 electron-builder 的 NSIS bundle。
+- 使用 Node.js 22.12+，运行 npm run desktop:portable；构建脚本先取得 Electron 发布 ZIP 并按官方 SHA-256 校验，通过 electron-builder API 生成 Windows x64 目录包，再由 NSIS 3.12 自定义脚本封装为单文件自解压 EXE，输出在 release/。Electron ZIP 缓存在 LocalAppData；升级 Electron 版本时需更新 fetch-electron.ps1 中的官方校验值。ELECTRON_DIST 可指向调用者已校验的 ZIP。
 - Electron 主进程为每次启动生成本机 UI HTTP 服务与一个 LAN 信令端口；UI 服务只绑定 127.0.0.1，信令端口绑定 0.0.0.0 以接受同网手机。
+- 桌面非秘密偏好由主进程保存在 userData/preferences.json，便携模式为 EXE 旁的 PAIRO-data/preferences.json。自动分配的本机信令端口不会被固定保存，API Key 不落盘。
 - 屏幕/窗口由 Electron desktopCapturer 枚举，Windows 上使用应用内来源选择对话框，不会自动选择首个屏幕。Electron 的 useSystemPicker 选项目前仅 macOS 15+ 实验支持，故 Windows 不依赖它。[Electron 屏幕捕获文档](https://www.electronjs.org/docs/latest/api/desktop-capturer)
 - 系统音频请求 Electron Windows loopback；麦克风由应用弹出每次会话权限确认。三组 Alt+Shift 快捷键通过 Electron globalShortcut 注册，可在窗口未聚焦时触发。[Electron 全局快捷键文档](https://www.electronjs.org/docs/latest/api/global-shortcut)
 - EXE 未做 Authenticode 签名，Windows SmartScreen 可能提示未知发布者。自解压包由本机 NSIS 3.12 生成；构建脚本自动探测 Program Files 下的 NSIS，非默认目录可通过 NSIS_HOME 指定。[electron-builder Windows 目标文档](https://www.electron.build/win)

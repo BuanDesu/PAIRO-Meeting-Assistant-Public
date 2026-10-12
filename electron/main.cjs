@@ -5,6 +5,8 @@ const fsSync = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createServer } = require('node:http');
 const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain } = require('electron');
+const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
+const { createPreferencesStore } = require('./preferences.cjs');
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 if (portableDir) {
@@ -22,6 +24,17 @@ let uiServer;
 let uiPort;
 let signalingPort;
 let registeredShortcuts = [];
+let preferencesStore;
+const uiOrigin = () => uiPort ? 'http://127.0.0.1:' + uiPort : '';
+function trustedContents(contents, details = {}) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents
+    && details.isMainFrame !== false
+    && isTrustedUiUrl(details.requestingUrl || details.securityOrigin || contents.getURL(), uiOrigin()));
+}
+function requireTrustedIpc(event) {
+  if (!trustedContents(event.sender) || event.senderFrame !== mainWindow.webContents.mainFrame
+    || !isTrustedUiUrl(event.senderFrame.url, uiOrigin())) throw new Error('Untrusted IPC sender');
+}
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 else app.on('second-instance', () => {
@@ -99,9 +112,15 @@ async function startServices() {
 }
 
 function configureMediaPermissions() {
-  session.defaultSession.setPermissionRequestHandler(async (_webContents, permission, callback, details) => {
-    if (permission !== 'media' || !details?.mediaTypes?.includes('audio')) {
+  session.defaultSession.setPermissionRequestHandler(async (contents, permission, callback, details) => {
+    const kind = mediaPermissionKind(permission, details);
+    if (!trustedContents(contents, details) || kind === 'deny') {
       callback(false);
+      return;
+    }
+    if (kind === 'display') {
+      // Grant the permission gate; the display handler still requires source selection.
+      callback(true);
       return;
     }
     try {
@@ -124,13 +143,28 @@ function configureMediaPermissions() {
 
 function configureDisplayCapture() {
   session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    let completed = false;
+    const respond = streams => {
+      if (completed) return;
+      completed = true;
+      try { callback(streams); }
+      catch (error) {
+        // Electron rejects an empty selection and may throw after consuming the callback.
+        if (streams.video) console.warn('Display capture response failed:', error.message);
+      }
+    };
+    if (!mainWindow || request.frame !== mainWindow.webContents.mainFrame
+      || !isTrustedUiUrl(request.frame.url, uiOrigin())) {
+      respond({});
+      return;
+    }
     try {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
         thumbnailSize: { width: 180, height: 110 },
       });
       if (!sources.length) {
-        callback({});
+        respond({});
         return;
       }
       const buttons = sources.map(source => source.name).concat(['取消']);
@@ -143,14 +177,15 @@ function configureDisplayCapture() {
         defaultId: 0,
       };
       const answer = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
-      const source = answer.response < sources.length ? sources[answer.response] : null;
+      const source = trustedContents(mainWindow?.webContents) && answer.response < sources.length ? sources[answer.response] : null;
       if (!source) {
-        callback({});
+        respond({});
         return;
       }
-      callback({ video: source, audio: request.audioRequested ? 'loopback' : undefined });
-    } catch {
-      callback({});
+      respond({ video: source, audio: request.audioRequested ? 'loopback' : undefined });
+    } catch (error) {
+      console.warn('Display capture selection failed:', error.message);
+      respond({});
     }
   }, { useSystemPicker: true });
 }
@@ -188,22 +223,37 @@ async function createWindow() {
   });
   mainWindow.removeMenu();
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isTrustedUiUrl(url, uiOrigin())) event.preventDefault();
+  });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = null; });
   await mainWindow.loadURL('http://127.0.0.1:' + uiPort + '/');
 }
 
-ipcMain.handle('desktop:signal-info', () => ({
-  signalBase: 'http://127.0.0.1:' + signalingPort,
-  signalingPort,
-  lanAddresses: getLanAddresses(),
-  registeredShortcuts,
-}));
+ipcMain.handle('desktop:signal-info', event => {
+  requireTrustedIpc(event);
+  return {
+    signalBase: 'http://127.0.0.1:' + signalingPort,
+    signalingPort,
+    lanAddresses: getLanAddresses(),
+    registeredShortcuts,
+  };
+});
+ipcMain.handle('desktop:preferences-read', event => {
+  requireTrustedIpc(event);
+  return preferencesStore.read();
+});
+ipcMain.handle('desktop:preferences-write', (event, value) => {
+  requireTrustedIpc(event);
+  return preferencesStore.write(value);
+});
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
   try {
     app.setAppUserModelId('com.pairo.meetingcopilot');
+    preferencesStore = createPreferencesStore(app.getPath('userData'));
     configureMediaPermissions();
     configureDisplayCapture();
     await startServices();
