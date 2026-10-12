@@ -12,7 +12,7 @@
 
 ## 本地启动
 
-需要 Node.js 20+ 与 npm。分别打开两个终端：
+需要 Node.js 22.12+ 与 npm，CI 使用 Node.js 24。分别打开两个终端：
 
 ```bash
 npm install
@@ -40,13 +40,17 @@ npm ci
 npm run desktop:portable
 ```
 
-输出位于 release/Pairo-Meeting-Copilot-0.1.0-win-x64.exe。EXE 启动时在本机托管界面，并在 8787（冲突时随机端口）启动信令服务；桌面界面会显示手机应填写的局域网地址。配置与对话偏好保存在 EXE 所在目录的 PAIRO-data/。
+从源码启动 Electron 时，首次运行先执行 `node node_modules/electron/install.js` 下载运行时，再执行 `npm run desktop`。
+
+输出位于 release/Pairo-Meeting-Copilot-0.1.0-win-x64.exe。EXE 启动时在本机托管界面，并在 8787（冲突时随机端口）启动信令服务；桌面界面会显示手机应填写的局域网地址。信令地址、模型 endpoint 与 model 保存在 EXE 所在目录的 PAIRO-data/preferences.json，不受随机 UI 端口影响；API Key、截图和对话内容不写入该文件。
 
 Android：需 JDK 21、Android SDK platform 36 与 build-tools 36.0.0，并设置 ANDROID_HOME / ANDROID_SDK_ROOT（Windows Android Studio 默认目录为 %LOCALAPPDATA%\Android\Sdk）及 JAVA_HOME。运行 npm run android:apk，输出 android/app/build/outputs/apk/debug/app-debug.apk。该 APK 使用 Android debug 签名，可侧载测试，不可作为 Play Store 发布包；正式发布需由发布者保管并配置自己的签名密钥。
 
 APK 为便于同一可信局域网连接便携 EXE，Android WebView 开启 cleartext，并以 HTTP/WS 连接局域网信令服务。信令只传 SDP/ICE，但明文信令存在局域网中间人风险；请仅在可信网络测试。公网/不可信网络部署必须使用 WSS 与受控 TURN。
 
 GitHub Actions 位于 .github/workflows/package-release.yml：手动触发可生成工作流 artifacts；推送 v* 标签会生成 GitHub Release 并附上 Windows EXE 与 debug APK。当前不创建/提交发布签名密钥。
+
+`.github/workflows/ci.yml` 会在推送分支和提交 PR 时，在 Windows 与 Linux 上运行自动化测试及网页构建。升级本次版本时请同时更新桌面和手机：大截图使用新的分块协议，旧客户端无法重组。
 
 查看 [原生打包说明](docs/PACKAGING.md) 与 [Android 官方平台要求](https://capacitorjs.com/docs/android)。
 
@@ -62,14 +66,19 @@ GitHub Actions 位于 .github/workflows/package-release.yml：手动触发可生
 
 - 共享屏幕、麦克风和音频需要桌面端用户明确授权；停止分享会关闭轨道与信令连接。
 - 浏览器 Web Speech Recognition 的实现可能把语音发送至浏览器供应商服务，具体取决于浏览器。会议/问卷场景启用前应取得必要同意。
-- API Key 只留在手机页面运行时内存，并随页面关闭/刷新清除。模型 endpoint 与 model 等非秘密偏好保存在本地浏览器。
+- API Key 只留在手机页面运行时内存，并随页面关闭/刷新清除。模型 endpoint 与 model 等非秘密偏好保存在本地浏览器；Electron 使用稳定配置文件。
+- 离开房间、切换设备角色或清空对话会取消当前模型请求，并清除截图和上下文。Android 原生 HTTP 请求可能继续在后台完成，其迟到结果会被丢弃。
 - 模型请求从手机端直接发到配置的提供商；截图/文本会被该服务处理。浏览器版需要 endpoint 允许 CORS，Android APK 使用 Capacitor 原生 HTTP。
 - 房间码是临时能力凭证。不要公开分享；关闭设备连接会释放房间。信令服务不保存会话和内容。
 - 公开部署必须使用 HTTPS/WSS、设置来源白名单与 TURN 服务；本项目是个人工具 MVP，尚未加入账号、持久化、房间 PIN 或生产级滥用防护。
 
 ## 检查
 
-- npm test：10 项自动化测试，覆盖信令、API 请求、URL 安全与 UI 选择器契约。
+- npm test：覆盖异常信令、分块传输、会话隔离、模型请求取消、权限、偏好保存与打包配置。
 - npm run build：Vite 生产构建。
+- npm run test:desktop：真实 Electron 屏幕权限入口测试，只枚举空来源，不捕获屏幕或麦克风；需先安装 Electron 运行时。
+- npm run test:webrtc：真实 Electron/WebRTC 配对、900 KB 截图传输及对端断开清理。需本机允许 ICE 连通；不捕获屏幕或麦克风。
+
+本次修复与验证记录见 [修复记录](docs/FIXES_2026-10-12.md)。
 
 查看 docs/PROJECT_PROGRESS.md、docs/PROJECT_FLOW.md、docs/DEPLOYMENT.md 与 docs/PLAN.md。

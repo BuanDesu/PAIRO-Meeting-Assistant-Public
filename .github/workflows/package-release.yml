@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: choco install nsis --yes --no-progress
       - run: npm ci
+      - run: npm test
       - run: npm run desktop:portable
       - uses: actions/upload-artifact@v4
         with:
@@ -43,6 +44,7 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - run: npm ci
+      - run: npm test
       - run: npm run android:apk
       - uses: actions/upload-artifact@v4
         with:

@@ -2,7 +2,7 @@
 
 ## 前端与信令服务
 
-1. 安装 Node.js 20+，运行 npm ci。
+1. 安装 Node.js 22.12+（CI 使用 Node.js 24），运行 npm ci。
 2. 构建前端：npm run build，将 dist/ 发布至 HTTPS 静态托管。
 3. 部署 Node 信令服务：npm run signal。托管平台需支持 WebSocket Upgrade，并设置 PORT。
 4. 配置 ALLOWED_ORIGINS 为前端完整 origin，例如 https://copilot.example.com。

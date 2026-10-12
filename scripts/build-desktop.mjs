@@ -1,20 +1,32 @@
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { desktopBuildOptions } from './desktop-config.mjs';
 
+const require = createRequire(import.meta.url);
+const electronBuilder = require('electron-builder');
 const root = process.cwd();
 if (process.platform !== 'win32') throw new Error('The portable EXE target must be built on Windows.');
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
-const programFilesX86 = process.env['ProgramFiles(x86)'] || process.env.ProgramFiles || 'C:\Program Files (x86)';
-const nsisHome = process.env.NSIS_HOME || resolve(programFilesX86, 'NSIS');
-const makensis = resolve(nsisHome, 'makensis.exe');
-if (!existsSync(makensis) || !existsSync(resolve(nsisHome, 'Plugins'))) {
-  throw new Error('NSIS 3.x was not found. Install NSIS or set NSIS_HOME.');
+const electronVersion = require('electron/package.json').version;
+const cacheRoot = process.env.LOCALAPPDATA ? resolve(process.env.LOCALAPPDATA, 'PairoMeetingCopilot', 'Cache') : resolve(root, '.electron-cache');
+const electronZip = process.env.ELECTRON_DIST || resolve(cacheRoot, 'electron-v' + electronVersion + '-win32-x64.zip');
+if (!process.env.ELECTRON_DIST) {
+  const fetcher = resolve(root, 'scripts', 'fetch-electron.ps1');
+  const result = spawnSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fetcher, '-Version', electronVersion, '-DestinationRoot', cacheRoot], { cwd: root, stdio: 'inherit' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+} else if (!existsSync(electronZip)) {
+  throw new Error('ELECTRON_DIST does not exist: ' + electronZip);
 }
-const builder = resolve(root, 'node_modules', '.bin', 'electron-builder.cmd');
-const builderResult = spawnSync(builder, ['--dir', '--win', '--x64'], { cwd: root, stdio: 'inherit', shell: true });
-if (builderResult.error) throw builderResult.error;
-if (builderResult.status !== 0) process.exit(builderResult.status ?? 1);
+if (!existsSync(electronZip)) throw new Error('Verified Electron ZIP is missing: ' + electronZip);
+const nsisHome = process.env.NSIS_HOME || resolve(process.env['ProgramFiles(x86)'] || process.env.ProgramFiles || 'C:\Program Files (x86)', 'NSIS');
+const makensis = resolve(nsisHome, 'makensis.exe');
+if (!existsSync(makensis) || !existsSync(resolve(nsisHome, 'Plugins'))) throw new Error('NSIS 3.x was not found. Install NSIS or set NSIS_HOME.');
+
+const built = await electronBuilder.build(desktopBuildOptions(pkg, electronZip, root));
+console.log('Unpacked Electron app:', Array.isArray(built) ? built.join(', ') : 'created');
 
 const outputDir = resolve(root, pkg.build.directories?.output || 'release');
 const appDir = resolve(outputDir, 'win-unpacked');

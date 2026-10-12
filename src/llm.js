@@ -1,20 +1,31 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
-export async function requestModel({ url, headers, body, isNative = Capacitor.isNativePlatform(), nativeHttp = CapacitorHttp, fetchImpl = globalThis.fetch }) {
-  if (isNative) {
-    const result = await nativeHttp.post({ url: String(url), headers, data: body, responseType: 'json' });
-    return { ok: result.status >= 200 && result.status < 300, status: result.status, json: async () => result.data };
-  }
-  return fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body) });
+function abortable(operation, signal) {
+  if (!signal) return operation;
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason || new DOMException('请求已取消', 'AbortError'));
+    signal.addEventListener('abort', abort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+    if (signal.aborted) abort();
+  });
 }
 
-export async function askModel({ endpoint, apiKey, model, question, imageDataUrl, history = [] }) {
+export async function requestModel({ url, headers, body, signal, isNative = Capacitor.isNativePlatform(), nativeHttp = CapacitorHttp, fetchImpl = globalThis.fetch }) {
+  signal?.throwIfAborted();
+  if (isNative) {
+    const result = await abortable(nativeHttp.post({ url: String(url), headers, data: body, responseType: 'json', connectTimeout: 10000, readTimeout: 60000 }), signal);
+    return { ok: result.status >= 200 && result.status < 300, status: result.status, json: async () => result.data };
+  }
+  return fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+}
+
+export async function askModel({ endpoint, apiKey, model, question, imageDataUrl, history = [], signal, timeoutMs = 60000 }) {
   if (!apiKey?.trim()) throw new Error('请先填写手机端 API Key');
   if (!endpoint?.trim()) throw new Error('请填写 Chat Completions API 地址');
   if (!model?.trim()) throw new Error('请填写模型名称');
   let url;
   try { url = new URL(endpoint.trim()); } catch { throw new Error('API 地址格式不正确'); }
-  const localHost = ['localhost', '127.0.0.1', '::1'].includes(url.hostname);
+  const localHost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && localHost)) throw new Error('API 地址必须使用 HTTPS（仅本机 localhost 可使用 HTTP）');
   const userContent = [{ type: 'text', text: question || '请分析当前共享内容，并给出简洁、准确的建议。' }];
   if (imageDataUrl) userContent.push({ type: 'image_url', image_url: { url: imageDataUrl } });
@@ -25,19 +36,38 @@ export async function askModel({ endpoint, apiKey, model, question, imageDataUrl
   ];
   const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer ' + apiKey.trim() };
   const body = { model: model.trim(), messages, temperature: 0.3 };
-  let response;
+  const controller = new AbortController();
+  const cancel = () => controller.abort(signal.reason);
+  signal?.addEventListener('abort', cancel, { once: true });
+  if (signal?.aborted) cancel();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    response = await requestModel({ url, headers, body });
-  } catch (error) {
-    const hint = Capacitor.isNativePlatform() ? '请检查网络与 API 地址。' : '请检查网络、CORS 与 API 地址。';
-    throw new Error('无法访问模型服务：' + error.message + '。' + hint);
+    let response;
+    try {
+      response = await requestModel({ url, headers, body, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        if (timedOut) throw new Error('模型请求超时，请稍后重试');
+        throw error;
+      }
+      const hint = Capacitor.isNativePlatform() ? '请检查网络与 API 地址。' : '请检查网络、CORS 与 API 地址。';
+      throw new Error('无法访问模型服务：' + error.message + '。' + hint);
+    }
+    const data = await response.json().catch(() => ({}));
+    if (controller.signal.aborted) {
+      if (timedOut) throw new Error('模型请求超时，请稍后重试');
+      controller.signal.throwIfAborted();
+    }
+    if (!response.ok) {
+      const detail = data?.error?.message || data?.message || ('HTTP ' + response.status);
+      throw new Error('模型服务返回错误：' + detail);
+    }
+    const answer = data?.choices?.[0]?.message?.content;
+    if (typeof answer !== 'string' || !answer.trim()) throw new Error('模型响应中没有可显示的文本');
+    return answer.trim();
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
   }
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = data?.error?.message || data?.message || ('HTTP ' + response.status);
-    throw new Error('模型服务返回错误：' + detail);
-  }
-  const answer = data?.choices?.[0]?.message?.content;
-  if (typeof answer !== 'string' || !answer.trim()) throw new Error('模型响应中没有可显示的文本');
-  return answer.trim();
 }
