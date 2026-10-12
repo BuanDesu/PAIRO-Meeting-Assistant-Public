@@ -4,6 +4,18 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+function Get-ArchiveSha256([string]$Path) {
+  # Windows PowerShell launched from pwsh may inherit incompatible module paths.
+  # Hash through .NET so verification does not depend on Get-FileHash autoloading.
+  $stream = [System.IO.File]::OpenRead($Path)
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $stream.Dispose()
+    $algorithm.Dispose()
+  }
+}
 $hashes = @{ '44.4.5' = '11c395820a5aaa8ebcc0686b476d0ac98a730274ebfbdc8cf5538a7c2815cb5d' }
 if (-not $hashes.ContainsKey($Version)) { throw "No verified Windows Electron SHA256 is recorded for version $Version" }
 $expected = $hashes[$Version]
@@ -11,7 +23,7 @@ $file = 'electron-v' + $Version + '-win32-x64.zip'
 New-Item -ItemType Directory -Force -Path $DestinationRoot | Out-Null
 $destination = Join-Path $DestinationRoot $file
 if (Test-Path $destination) {
-  $existing = (Get-FileHash -Path $destination -Algorithm SHA256).Hash.ToLower()
+  $existing = Get-ArchiveSha256 $destination
   if ($existing -eq $expected) { Write-Output ('Using verified cached Electron archive: ' + $destination); exit 0 }
   Remove-Item -Force $destination
 }
@@ -24,7 +36,7 @@ try {
   $mirrorUrl = 'https://cdn.npmmirror.com/binaries/electron/v' + $Version + '/' + $file
   Invoke-WebRequest -Uri $mirrorUrl -OutFile $tempFile -UseBasicParsing -TimeoutSec 900
 }
-$actual = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash.ToLower()
+$actual = Get-ArchiveSha256 $tempFile
 if ($actual -ne $expected) {
   Remove-Item -Force $tempFile -ErrorAction SilentlyContinue
   throw ('Electron archive failed official SHA256 verification: ' + $actual)
