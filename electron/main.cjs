@@ -7,6 +7,7 @@ const { createServer } = require('node:http');
 const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain } = require('electron');
 const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
 const { createPreferencesStore } = require('./preferences.cjs');
+const { lanAddresses } = require('./network.cjs');
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 if (portableDir) {
@@ -51,14 +52,7 @@ const MIME = {
 };
 
 function getLanAddresses() {
-  const addresses = [];
-  for (const [name, records] of Object.entries(os.networkInterfaces())) {
-    for (const record of records || []) {
-      if (record.family !== 'IPv4' || record.internal || record.address.startsWith('169.254.')) continue;
-      addresses.push({ interface: name, ip: record.address, url: 'http://' + record.address + ':' + signalingPort });
-    }
-  }
-  return addresses;
+  return lanAddresses(os.networkInterfaces(), signalingPort);
 }
 
 function listen(server, port, host) {

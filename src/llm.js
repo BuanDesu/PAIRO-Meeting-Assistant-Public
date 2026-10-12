@@ -1,5 +1,20 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 
+export function modelHttpError(status, detail, secret = '') {
+  const hints = {
+    400: '问题格式或模型能力不匹配；分析截图时请使用支持图片的模型',
+    401: 'API Key 无效或已失效，请重新填写',
+    403: '账号没有此服务或模型的使用权限',
+    404: 'API 地址或模型名称不存在，请核对服务商给出的完整地址与名称',
+    413: '截图或问题过大，请缩小截图后重试',
+    429: '调用过于频繁或账号额度不足，请检查额度后稍后重试',
+  };
+  const hint = hints[status] || (status >= 500 ? '模型服务暂时不可用，请稍后重试' : '模型服务拒绝了请求');
+  let safeDetail = typeof detail === 'string' ? detail : '';
+  if (secret) safeDetail = safeDetail.split(secret).join('[已隐藏]');
+  return `${hint}（HTTP ${status}）${safeDetail ? '：' + safeDetail.slice(0, 500) : ''}`;
+}
+
 function abortable(operation, signal) {
   if (!signal) return operation;
   return new Promise((resolve, reject) => {
@@ -61,9 +76,10 @@ export async function askModel({ endpoint, apiKey, model, question, imageDataUrl
     }
     if (!response.ok) {
       const detail = data?.error?.message || data?.message || ('HTTP ' + response.status);
-      throw new Error('模型服务返回错误：' + detail);
+      throw new Error(modelHttpError(response.status, detail, apiKey.trim()));
     }
-    const answer = data?.choices?.[0]?.message?.content;
+    const content = data?.choices?.[0]?.message?.content;
+    const answer = Array.isArray(content) ? content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n') : content;
     if (typeof answer !== 'string' || !answer.trim()) throw new Error('模型响应中没有可显示的文本');
     return answer.trim();
   } finally {

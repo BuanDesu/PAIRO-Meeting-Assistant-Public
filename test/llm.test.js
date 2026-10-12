@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { askModel, requestModel } from '../src/llm.js';
+import { askModel, requestModel, modelHttpError } from '../src/llm.js';
+
+test('provider errors give actionable guidance and hide the key even if echoed by the provider', () => {
+  const key = 'private-test-key';
+  const message = modelHttpError(401, 'Unauthorized: ' + key, key);
+  assert.match(message, /Key 无效/);
+  assert.ok(!message.includes(key));
+  assert.match(modelHttpError(404, ''), /地址或模型名称/);
+  assert.match(modelHttpError(429, ''), /额度/);
+  assert.match(modelHttpError(503, ''), /暂时不可用/);
+});
 
 test('sends text and screenshot to the configured compatible API', async t => {
   const original = globalThis.fetch;

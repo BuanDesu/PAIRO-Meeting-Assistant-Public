@@ -20,6 +20,7 @@ jobs:
           cache: npm
       - run: choco install nsis --yes --no-progress
       - run: npm ci
+      - run: npm run release:check
       - run: npm test
       - run: npm run desktop:portable
       - uses: actions/upload-artifact@v4
@@ -44,16 +45,34 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36 build-tools;36.0.0'
       - run: npm ci
+      - run: npm run release:check
       - run: npm test
-      - run: npm run android:apk
+      - name: Restore fixed release signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PAIRO_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "Configure Android release signing secrets before publishing"; exit 1; }
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/pairo-release.keystore"
+          chmod 600 "$RUNNER_TEMP/pairo-release.keystore"
+      - run: npm run android:release
+        env:
+          PAIRO_ANDROID_KEYSTORE: ${{ runner.temp }}/pairo-release.keystore
+          PAIRO_ANDROID_STORE_PASSWORD: ${{ secrets.PAIRO_ANDROID_STORE_PASSWORD }}
+          PAIRO_ANDROID_KEY_ALIAS: ${{ secrets.PAIRO_ANDROID_KEY_ALIAS }}
+          PAIRO_ANDROID_KEY_PASSWORD: ${{ secrets.PAIRO_ANDROID_KEY_PASSWORD }}
+      - name: Verify APK signature and version
+        run: |
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs android/app/build/outputs/apk/release/app-release.apk
+          version=$(node -p "require('./package.json').version")
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging android/app/build/outputs/apk/release/app-release.apk | grep -F "versionName='$version'"
       - name: Name Android download
         run: |
           version=$(node -p "require('./package.json').version")
           mkdir -p release
-          cp android/app/build/outputs/apk/debug/app-debug.apk "release/Pairo-Meeting-Copilot-${version}-android.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "release/Pairo-Meeting-Copilot-${version}-android.apk"
       - uses: actions/upload-artifact@v4
         with:
-          name: android-debug-apk
+          name: android-release-apk
           path: release/Pairo-Meeting-Copilot-*-android.apk
           if-no-files-found: error
 
@@ -64,20 +83,27 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - uses: actions/download-artifact@v4
         with:
           name: windows-portable
           path: artifacts/windows
       - uses: actions/download-artifact@v4
         with:
-          name: android-debug-apk
+          name: android-release-apk
           path: artifacts/android
+      - run: node scripts/release-assets.mjs artifacts
       - uses: softprops/action-gh-release@v3
         with:
           name: PAIRO ${{ github.ref_name }}
           generate_release_notes: true
           fail_on_unmatched_files: true
           overwrite_files: false
+          body_path: artifacts/RELEASE_NOTES.md
           files: |
             artifacts/windows/*.exe
             artifacts/android/*.apk
+            artifacts/SHA256SUMS.txt

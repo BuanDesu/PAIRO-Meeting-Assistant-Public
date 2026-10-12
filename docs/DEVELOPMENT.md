@@ -38,7 +38,7 @@ Windows x64 需要 NSIS 3.x，运行：
 npm run desktop:portable
 ```
 
-输出：`release/Pairo-Meeting-Copilot-0.1.0-win-x64.exe`。
+输出：`release/Pairo-Meeting-Copilot-<package.json 版本>-win-x64.exe`。
 
 Android 需要 JDK 21、Android SDK platform 36 和 build-tools 36.0.0，设置 `JAVA_HOME`、`ANDROID_HOME` / `ANDROID_SDK_ROOT` 后运行：
 
@@ -57,5 +57,9 @@ npm audit
 ```
 
 安装 Electron 运行时后，还可运行 `npm run test:desktop` 验证屏幕权限入口，或 `npm run test:webrtc` 验证真实配对、截图和断开清理。测试使用空采集来源和模拟截图，不捕获真实屏幕或麦克风；WebRTC 测试需要本机允许 ICE 连通。
+
+`npm run test:webrtc` 还会断开信令并重建媒体连接，确认数据通道恢复。`npm run test:ui` 使用生产构建验证网卡选择、二维码显示、角色切换时停止模拟采集与手机布局，截图保存在 `release/ui-qa/`。这些检查不代替 [实际设备验收](DEVICE_VALIDATION.md)。
+
+当前功能分支新增扫码配对、电脑允许手机连接、断线恢复及 AI 配置测试/取消/重试；新协议版本为 2，与已发布的 v0.1.0 不兼容，两端必须一起升级。Android 开发版需要 Android 8 或更高版本。未发布前，README 下载区仍指向已经发布的 v0.1.0；下一次发布时统一更新使用指南和下载链接。
 
 分支推送和 PR 会在 Windows/Linux 运行测试与网页构建。版本标签和手动触发的原生打包流程见 [维护者发布步骤](RELEASING.md)。

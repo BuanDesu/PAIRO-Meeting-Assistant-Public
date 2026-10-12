@@ -49,11 +49,14 @@
             <aside class="side-stack">
               <section class="panel pairing-panel">
                 <div class="panel-heading"><div><span class="section-kicker">PAIRING</span><h2>连接手机</h2></div><span class="step-mark">01</span></div>
-                <p class="panel-copy">开始分享后，桌面端会生成一次性房间码。在手机端输入它即可配对。</p>
+                <p class="panel-copy">开始分享后，在手机程序中扫码，核对地址后连接。也可以手动输入地址与房间码。</p>
                 <div class="room-code-wrap"><div><span class="micro-label">一次性房间码</span><strong id="room-code">等待分享</strong></div><button id="copy-code" class="icon-button" type="button" aria-label="复制房间码" disabled>▣</button></div>
                 <label class="field-label" for="desktop-signal">信令服务地址</label><input class="text-input" id="desktop-signal" inputmode="url" autocomplete="url" />
                 <div class="connection-line"><span class="mini-dot" id="desktop-dot"></span><span id="desktop-status">尚未连接</span></div>
-                <div class="lan-info" id="desktop-lan-info" hidden><span class="micro-label">手机端信令地址（同一局域网）</span><code id="desktop-lan-addresses">启动后显示</code><button id="copy-lan-url" class="text-button" type="button">复制地址</button></div>
+                <button id="reconnect-desktop" class="text-button" type="button" hidden>重新连接</button>
+                <div class="lan-info" id="desktop-lan-info" hidden><label class="field-label" for="desktop-lan-select">手机连接地址（选择当前 Wi-Fi 或网线）</label><select class="text-input" id="desktop-lan-select"></select><code id="desktop-lan-addresses">启动后显示</code><div class="pairing-actions"><button id="copy-lan-url" class="text-button" type="button">复制所选地址</button><button id="refresh-lan" class="text-button" type="button">刷新地址</button></div></div>
+                <div class="pairing-qr" id="pairing-qr" hidden><img id="pairing-qr-image" alt="手机扫码配对二维码" /><p>在手机程序中点击“扫码配对”。二维码有效期 10 分钟，请勿分享给他人。</p><button id="refresh-qr" class="text-button" type="button">刷新二维码</button></div>
+                <div class="pairing-approval" id="pairing-approval" hidden role="status"><p>有手机申请连接。确认是你的手机后，才允许它接收共享画面与音频。</p><div class="pairing-actions"><button id="allow-peer" class="button button-primary" type="button">允许此手机</button><button id="reject-peer" class="button button-danger" type="button">拒绝</button></div></div>
               </section>
               <section class="panel request-panel">
                 <div class="panel-heading"><div><span class="section-kicker">INCOMING</span><h2>最近的问题</h2></div><span class="counter" id="request-count">0</span></div>
@@ -79,8 +82,11 @@
                   <label class="field-label" for="mobile-signal">信令服务地址</label><input class="text-input" id="mobile-signal" inputmode="url" autocomplete="url" placeholder="http://电脑局域网IP:端口" required />
                   <label class="field-label" for="mobile-room">桌面房间码</label><div class="input-action"><input class="text-input room-input" id="mobile-room" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="例如 8J4K7M2P" required /><button class="button button-primary" type="submit" id="join-room">连接</button></div>
                 </form>
+                <div class="pairing-actions"><button id="scan-pairing" class="button button-quiet" type="button">扫码配对</button><button id="check-connection" class="text-button" type="button">检测电脑连接</button></div>
+                <p class="hint" id="pairing-hint">扫码只填写地址与房间码，确认后点击“连接”。</p>
                 <div class="connection-line"><span class="mini-dot" id="mobile-dot"></span><span id="mobile-status">尚未连接</span></div>
                 <button id="leave-room" class="button button-quiet leave-room" type="button" hidden>断开当前房间</button>
+                <button id="reconnect-room" class="text-button" type="button" hidden>重新连接</button>
               </section>
               <section class="panel monitor-panel">
                 <div class="panel-heading"><div><span class="section-kicker">DESKTOP MONITOR</span><h2>实时桌面</h2></div><button id="enable-audio" class="text-button" type="button">开启声音</button></div>
@@ -102,6 +108,8 @@
                   <div><label class="field-label" for="llm-key">API Key</label><input class="text-input" id="llm-key" type="password" autocomplete="off" placeholder="仅本次页面会话使用" /></div>
                 </div>
                 <div class="model-actions"><label class="check-row"><input id="auto-answer" type="checkbox" /><span>收到问题后自动请求模型</span></label><span class="save-hint" id="config-hint">Key 不会保存或发送给信令服务</span></div>
+                <p class="hint">从 AI 服务商复制完整的 Chat Completions 地址、模型名称与 API Key。截图分析需要支持图片的模型。</p>
+                <div class="pairing-actions"><button id="test-model" class="button button-quiet" type="button">测试 AI 配置</button><span class="hint" id="model-test-status">测试会发送一条简短文字，可能计入服务商用量。</span></div>
               </section>
               <section class="panel conversation-panel">
                 <div class="panel-heading"><div><span class="section-kicker">COPILOT</span><h2>问题与回答</h2></div><button class="text-button" id="clear-chat" type="button">清空</button></div>
@@ -109,6 +117,7 @@
                 <div class="message-list" id="message-list" aria-live="polite"><div class="conversation-empty" id="conversation-empty"><span class="empty-orbit">✳</span><strong>准备好接收桌面请求</strong><p>截图与转写文本会显示在这里。你也可以直接输入问题。</p></div></div>
                 <form id="composer" class="composer"><textarea id="question-input" rows="2" placeholder="输入问题，或等待桌面端快捷键…" aria-label="输入问题"></textarea><button class="send-button" id="send-button" type="submit" aria-label="发送问题">↑</button></form>
                 <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button id="speak-answer" type="button" class="text-button">朗读最近答复</button></div>
+                <div class="pairing-actions"><span class="hint" id="model-queue-status">没有待处理请求</span><button id="cancel-model" class="text-button" type="button" hidden>取消等待</button><button id="retry-model" class="text-button" type="button" hidden>重试上次失败的问题</button></div>
               </section>
             </div>
           </div>

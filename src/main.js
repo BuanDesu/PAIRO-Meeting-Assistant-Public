@@ -1,8 +1,10 @@
 import './styles.css';
-import { Capacitor } from '@capacitor/core';
+import './pairing.css';
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { PeerSession } from './peer-session.js';
 import { askModel } from './llm.js';
 import { defaultRoleForPlatform } from './platform.js';
+import { createPairingCode, parsePairingCode, checkSignaling } from './pairing.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -11,6 +13,8 @@ const state = {
   latestImage: '', chatHistory: [], lastAnswer: '', toastTimer: null, lanAddresses: [],
   captureGeneration: 0, modelGeneration: 0, modelControllers: new Set(),
   modelQueue: Promise.resolve(), modelPending: 0, nativeSignalBase: '',
+  pairingGeneration: 0,
+  modelNodes: new Set(), retryRequest: null, configController: null, configGeneration: 0,
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
@@ -24,7 +28,11 @@ const defaultBase = initialRole === 'mobile' ? ''
       : location.origin;
 
 function readPreferences() {
-  try { return JSON.parse(localStorage.getItem(preferenceKey) || '{}'); } catch { return {}; }
+  try {
+    const value = JSON.parse(localStorage.getItem(preferenceKey) || '{}');
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+    return Object.fromEntries(['signalBase', 'endpoint', 'model'].filter(key => typeof value[key] === 'string').map(key => [key, value[key]]));
+  } catch { return {}; }
 }
 function savePreferences() {
   const signalBase = $(state.role === 'desktop' ? 'desktop-signal' : 'mobile-signal').value.trim();
@@ -38,11 +46,9 @@ function savePreferences() {
 }
 
 function resetConversation() {
-  state.modelGeneration += 1;
-  for (const controller of state.modelControllers) controller.abort();
-  state.modelControllers.clear();
-  state.modelQueue = Promise.resolve();
-  state.modelPending = 0;
+  cancelModelRequests(false);
+  state.retryRequest = null;
+  updateModelQueue();
   state.latestImage = '';
   state.chatHistory = [];
   state.lastAnswer = '';
@@ -58,9 +64,30 @@ function resetConversation() {
   if ('speechSynthesis' in window) window.speechSynthesis.cancel();
 }
 
+function updateModelQueue() {
+  $('model-queue-status').textContent = state.modelPending ? `正在处理 ${state.modelPending} 个请求，按收到顺序回答` : '没有待处理请求';
+  $('cancel-model').hidden = state.modelPending === 0;
+  $('retry-model').hidden = !state.retryRequest;
+  $('retry-model').disabled = state.modelPending > 0;
+  $('send-button').disabled = state.modelPending > 0;
+}
+
+function cancelModelRequests(showMessage = true) {
+  state.modelGeneration += 1;
+  for (const controller of state.modelControllers) controller.abort();
+  state.modelControllers.clear();
+  for (const node of state.modelNodes) node.remove();
+  state.modelNodes.clear();
+  state.modelQueue = Promise.resolve();
+  state.modelPending = 0;
+  updateModelQueue();
+  if (showMessage) addChatMessage('system', '已取消等待。服务商已经接收的请求仍可能计入用量。');
+}
+
 function resetMobileMedia() {
   $('join-room').disabled = false;
   $('leave-room').hidden = true;
+  $('reconnect-room').hidden = true;
   $('remote-preview').srcObject = null;
   $('remote-audio').srcObject = null;
   $('remote-preview').classList.remove('visible');
@@ -115,12 +142,16 @@ function makePeer(role) {
     role,
     onStatus: message => {
       if (state.peer !== peer) return;
-      setStatus(role, message, message.includes('P2P 已加密直连'));
-      if (role === 'mobile' && message.includes('P2P 已加密直连')) toast('两台设备已建立加密直连');
+      if (!peer.awaitingApproval) $('pairing-approval').hidden = true;
+      if (role === 'desktop') $('reconnect-desktop').hidden = !['failed', 'disconnected', 'reconnecting'].includes(peer.phase);
+      setStatus(role, message, peer.phase === 'connected');
+      if (role === 'mobile') $('reconnect-room').hidden = !['failed', 'disconnected', 'reconnecting'].includes(peer.phase);
+      if (role === 'mobile' && peer.phase === 'connected') toast('两台设备已建立加密直连');
     },
     onMessage: message => state.peer === peer ? (role === 'mobile' ? handleMobileMessage(message) : handleDesktopMessage(message)) : undefined,
     onStream: stream => state.peer === peer && role === 'mobile' ? attachRemoteStream(stream) : null,
     onPeerLeft: () => { if (state.peer === peer) resetConversation(); },
+    onApproval: () => { if (state.peer === peer && role === 'desktop') $('pairing-approval').hidden = false; },
   });
   return peer;
 }
@@ -135,22 +166,70 @@ async function dispatchDesktopHotkey(action) {
   }
 }
 
-async function loadDesktopSignalInfo() {
+async function loadDesktopSignalInfo(refresh = false) {
   if (!window.desktopBridge) return;
   try {
     const info = await window.desktopBridge.getSignalInfo();
     state.nativeSignalBase = info.signalBase;
-    const preferences = await window.desktopBridge.readPreferences();
+    const preferences = refresh ? {} : await window.desktopBridge.readPreferences();
     if ($('desktop-signal').value === (saved.signalBase || defaultBase)) $('desktop-signal').value = preferences.signalBase || info.signalBase;
     if ($('mobile-signal').value === (saved.signalBase || defaultBase)) $('mobile-signal').value = preferences.signalBase || info.signalBase;
     if ($('llm-endpoint').value === (saved.endpoint || 'https://api.openai.com/v1/chat/completions')) $('llm-endpoint').value = preferences.endpoint || $('llm-endpoint').value;
     if ($('llm-model').value === (saved.model || 'gpt-4o-mini')) $('llm-model').value = preferences.model || $('llm-model').value;
     state.lanAddresses = info.lanAddresses || [];
-    $('desktop-lan-addresses').textContent = state.lanAddresses.length
-      ? state.lanAddresses.map(item => item.url).join('\n')
-      : '未检测到局域网 IPv4 地址';
+    const select = $('desktop-lan-select');
+    const previous = select.value;
+    select.innerHTML = '';
+    for (const item of state.lanAddresses) {
+      const option = document.createElement('option');
+      option.value = item.url;
+      option.textContent = item.interface + ' · ' + item.ip;
+      select.append(option);
+    }
+    select.value = state.lanAddresses.some(item => item.url === previous) ? previous : state.lanAddresses[0]?.url || '';
+    $('desktop-lan-addresses').textContent = select.value || '未检测到局域网 IPv4 地址';
     $('desktop-lan-info').hidden = false;
+    void refreshPairingQr();
   } catch (error) { toast('读取局域网配对地址失败：' + error.message); }
+}
+
+function pairingAddress() {
+  const configured = $('desktop-signal').value.trim();
+  return configured === state.nativeSignalBase ? $('desktop-lan-select').value : configured;
+}
+
+async function refreshPairingQr() {
+  const generation = ++state.pairingGeneration;
+  $('pairing-qr').hidden = true;
+  $('pairing-qr-image').removeAttribute('src');
+  if (!state.room || !state.displayStream) return;
+  try {
+    const payload = createPairingCode(pairingAddress(), state.room);
+    const { default: QRCode } = await import('qrcode');
+    const image = await QRCode.toDataURL(payload, { width: 240, margin: 3, errorCorrectionLevel: 'M' });
+    if (generation !== state.pairingGeneration || !state.displayStream) return;
+    $('pairing-qr-image').src = image;
+    $('pairing-qr').hidden = false;
+  } catch { /* Manual pairing remains available when no phone-reachable address exists. */ }
+}
+
+async function scanPairing() {
+  if (state.role !== 'mobile') return;
+  const generation = state.captureGeneration;
+  $('scan-pairing').disabled = true;
+  try {
+    const { CapacitorBarcodeScanner } = await import('@capacitor/barcode-scanner');
+    const result = await CapacitorBarcodeScanner.scanBarcode({ hint: 0, cameraDirection: 1, scanInstructions: '对准电脑上的 PAIRO 配对二维码', scanButton: false, android: { scanningLibrary: 'zxing' }, web: { showCameraSelection: true }, cancelButtonAccessibilityLabel: '取消扫码' });
+    if (state.role !== 'mobile' || generation !== state.captureGeneration || !result.ScanResult) return;
+    const data = parsePairingCode(result.ScanResult);
+    $('mobile-signal').value = data.signalBase;
+    $('mobile-room').value = data.room;
+    $('pairing-hint').textContent = '已填入配对信息，请核对电脑地址后点击“连接”。';
+  } catch (error) {
+    if (state.role !== 'mobile' || generation !== state.captureGeneration) return;
+    const cancelled = /cancel|取消/i.test(error.message || '');
+    $('pairing-hint').textContent = cancelled ? '扫码已取消，也可以手动填写地址与房间码。' : (error.message || '扫码失败') + '。可重试扫码，或手动填写地址与房间码。';
+  } finally { $('scan-pairing').disabled = false; }
 }
 
 async function startDesktop() {
@@ -194,8 +273,9 @@ async function startDesktop() {
     await peer.connect($('desktop-signal').value, state.room);
     if (!current() || state.peer !== peer) { peer.disconnect(); return; }
     setFeedActive(true);
+    void refreshPairingQr();
     $('desktop-feed-status').textContent = '等待手机配对';
-    toast('房间码已生成，请在手机端输入');
+    toast('配对信息已生成，可在手机端扫码或手动输入');
   } catch (error) {
     if (!current()) { peer?.disconnect(); return; }
     if (state.displayStream) stopDesktop(false);
@@ -218,6 +298,10 @@ function stopDesktop(showToast = true) {
   setFeedActive(false);
   $('room-code').textContent = '等待分享';
   $('copy-code').disabled = true;
+  $('pairing-approval').hidden = true;
+  $('reconnect-desktop').hidden = true;
+  state.room = '';
+  void refreshPairingQr();
   setStatus('desktop', '尚未连接');
   if (showToast) toast('桌面分享已停止');
 }
@@ -405,10 +489,12 @@ async function submitQuestion(question, image = state.latestImage) {
   const controller = new AbortController();
   state.modelControllers.add(controller);
   state.modelPending += 1;
-  const pending = addChatMessage('system', '正在请求模型…');
-  $('send-button').disabled = true;
+  const pending = addChatMessage('system', state.modelPending > 1 ? '已排队，等待前一个问题完成…' : '正在请求模型…');
+  state.modelNodes.add(pending);
+  updateModelQueue();
   const request = state.modelQueue.catch(() => {}).then(async () => {
     if (!current()) return;
+    pending.textContent = '正在请求模型…';
     try {
       const answer = await askModel({ endpoint, apiKey: key, model, question: actualQuestion, imageDataUrl: image, history: state.chatHistory, signal: controller.signal });
       if (!current()) return;
@@ -422,12 +508,16 @@ async function submitQuestion(question, image = state.latestImage) {
       }
     } catch (error) {
       pending.remove();
-      if (current() && !controller.signal.aborted) addChatMessage('system', error.message || '模型请求失败');
+      if (current() && !controller.signal.aborted) {
+        addChatMessage('system', error.message || '模型请求失败');
+        state.retryRequest = { question: actualQuestion, image };
+      }
     } finally {
       state.modelControllers.delete(controller);
+      state.modelNodes.delete(pending);
       if (current()) {
         state.modelPending -= 1;
-        $('send-button').disabled = state.modelPending > 0;
+        updateModelQueue();
       }
     }
   });
@@ -446,10 +536,26 @@ $('copy-code').addEventListener('click', async () => {
   catch { toast('复制失败，请手动输入房间码'); }
 });
 $('copy-lan-url').addEventListener('click', async () => {
-  const address = state.lanAddresses[0]?.url;
+  const address = pairingAddress();
   if (!address) return toast('未检测到可用的局域网地址');
   try { await navigator.clipboard.writeText(address); toast('手机信令地址已复制'); }
   catch { toast('复制失败，请手动选择地址'); }
+});
+$('desktop-lan-select').addEventListener('change', () => {
+  $('desktop-lan-addresses').textContent = $('desktop-lan-select').value;
+  void refreshPairingQr();
+});
+$('refresh-lan').addEventListener('click', () => loadDesktopSignalInfo(true));
+$('refresh-qr').addEventListener('click', refreshPairingQr);
+$('allow-peer').addEventListener('click', () => { state.peer?.approvePeer(true); $('pairing-approval').hidden = true; });
+$('reject-peer').addEventListener('click', () => { state.peer?.approvePeer(false); $('pairing-approval').hidden = true; });
+$('scan-pairing').addEventListener('click', scanPairing);
+$('check-connection').addEventListener('click', async () => {
+  $('check-connection').disabled = true;
+  $('pairing-hint').textContent = '正在检测电脑服务…';
+  try { $('pairing-hint').textContent = await checkSignaling($('mobile-signal').value, { nativeHttp: Capacitor.getPlatform() === 'android' ? CapacitorHttp : undefined }); }
+  catch (error) { $('pairing-hint').textContent = error.message; }
+  finally { $('check-connection').disabled = false; }
 });
 $('mobile-connect').addEventListener('submit', async event => {
   event.preventDefault();
@@ -483,6 +589,8 @@ $('leave-room').addEventListener('click', () => {
   resetMobileMedia();
   setStatus('mobile', '已断开连接');
 });
+$('reconnect-room').addEventListener('click', () => state.peer?.reconnect());
+$('reconnect-desktop').addEventListener('click', () => state.peer?.reconnect());
 $('enable-audio').addEventListener('click', async () => {
   try {
     await $('remote-audio').play();
@@ -505,6 +613,36 @@ $('question-input').addEventListener('keydown', event => {
   }
 });
 $('clear-chat').addEventListener('click', resetConversation);
+$('cancel-model').addEventListener('click', () => cancelModelRequests());
+$('retry-model').addEventListener('click', () => {
+  if (!state.retryRequest || state.modelPending) return;
+  const retry = state.retryRequest;
+  state.retryRequest = null;
+  addChatMessage('incoming', '重试：' + retry.question);
+  submitQuestion(retry.question, retry.image);
+  updateModelQueue();
+});
+$('test-model').addEventListener('click', async () => {
+  const generation = ++state.configGeneration;
+  const controller = state.configController = new AbortController();
+  $('test-model').disabled = true;
+  $('model-test-status').textContent = '正在测试配置…';
+  try {
+    await askModel({ endpoint: $('llm-endpoint').value.trim(), apiKey: $('llm-key').value, model: $('llm-model').value.trim(), question: '请仅回复“连接成功”。', signal: controller.signal });
+    if (generation === state.configGeneration) $('model-test-status').textContent = '文字请求成功。可继续用截图测试模型的图片能力。';
+  } catch (error) {
+    if (generation === state.configGeneration && !controller.signal.aborted) $('model-test-status').textContent = error.message || '配置测试失败';
+  } finally {
+    if (generation === state.configGeneration) { state.configController = null; $('test-model').disabled = false; }
+  }
+});
+for (const id of ['llm-endpoint', 'llm-model', 'llm-key']) $(id).addEventListener('input', () => {
+  state.configGeneration += 1;
+  state.configController?.abort();
+  state.configController = null;
+  $('test-model').disabled = false;
+  $('model-test-status').textContent = '配置已更改，请重新测试。测试可能计入服务商用量。';
+});
 $('remove-attachment').addEventListener('click', () => {
   state.latestImage = '';
   $('attachment-strip').hidden = true;
@@ -523,7 +661,7 @@ $('desktop-signal').value = saved.signalBase || defaultBase;
 $('llm-endpoint').value = saved.endpoint || 'https://api.openai.com/v1/chat/completions';
 $('llm-model').value = saved.model || 'gpt-4o-mini';
 void loadDesktopSignalInfo();
-$('desktop-signal').addEventListener('change', savePreferences);
+$('desktop-signal').addEventListener('change', () => { savePreferences(); void refreshPairingQr(); });
 
 function handleDesktopKeydown(event) {
   if (state.role !== 'desktop' || event.repeat || !event.altKey || !event.shiftKey) return;
@@ -538,6 +676,7 @@ if (window.desktopBridge) window.desktopBridge.onShortcut(dispatchDesktopHotkey)
 else document.addEventListener('keydown', handleDesktopKeydown);
 if (initialRole !== state.role) setRole(initialRole);
 window.addEventListener('beforeunload', () => {
+  state.configController?.abort();
   resetConversation();
   state.peer?.disconnect();
   state.outgoingStream?.getTracks().forEach(track => track.stop());

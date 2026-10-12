@@ -1,0 +1,8 @@
+.pairing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.pairing-qr { margin-top: 16px; text-align: center; }
+.pairing-qr img { width: min(100%, 240px); border-radius: 10px; background: white; }
+.pairing-qr p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+#desktop-lan-select { margin-bottom: 10px; }
+#pairing-hint { display: block; line-height: 1.6; overflow-wrap: anywhere; }
+.pairing-approval { margin-top: 14px; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; }
+.pairing-approval p { font-size: 12px; line-height: 1.6; }

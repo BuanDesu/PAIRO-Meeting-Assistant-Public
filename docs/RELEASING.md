@@ -10,12 +10,13 @@
 
 ## 自动打包发布
 
-推送指向已验证提交的 `v<版本>` 标签，例如 `v0.1.0`，会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE 和 Android debug APK，测试通过、两个产物都生成后才创建或补全 Release。
+推送指向已验证提交的 `v<版本>` 标签会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE 和 Android 正式签名 APK，测试通过、两个产物都生成并验证后才创建或补全 Release。`npm run release:check` 检查标签、package.json 与锁文件版本，Android 内部版本也由同一版本生成。
 
 发布文件名：
 
 - `Pairo-Meeting-Copilot-<版本>-win-x64.exe`
 - `Pairo-Meeting-Copilot-<版本>-android.apk`
+- `SHA256SUMS.txt`
 
 手动运行此工作流会生成 Actions artifacts，供检查下载；手动运行本身不创建 Release。
 
@@ -29,4 +30,24 @@
 
 ## 当前测试包的签名
 
-Windows EXE 尚未进行 Authenticode 签名。Android APK 使用 debug 签名，不是应用商店发布包；本机构建和 CI 构建的签名可能不同，更新时可能需要先卸载旧版。面向长期分发时，应配置由维护者保管的固定签名密钥；不把密钥提交到仓库。
+Windows EXE 尚未进行 Authenticode 签名。已发布的 v0.1.0 APK 使用 debug 签名；迁移到正式签名时可能需要先卸载一次。以后的正式包使用相同签名，升级编号按 `major × 1000000 + minor × 1000 + patch + 1` 递增；minor/patch 须小于 1000，总编号不能超过 Android 限制。不得降低版本或在同一版本下更换二进制附件。
+
+## 固定 Android 签名
+
+在维护者明确授权后，Windows 上运行：
+
+```powershell
+powershell -NoProfile -File scripts/provision-android-signing.ps1 -Upload
+```
+
+脚本只在首次执行时生成密钥，重复执行不会更换密钥；`.local-signing/` 不进入 Git，目录权限仅给当前 Windows 用户，密码由 Windows DPAPI 加密保存。`-Upload` 将签名配置写入仓库 GitHub Actions 加密 Secrets：`PAIRO_ANDROID_KEYSTORE_BASE64`、`PAIRO_ANDROID_STORE_PASSWORD`、`PAIRO_ANDROID_KEY_ALIAS`、`PAIRO_ANDROID_KEY_PASSWORD`。
+
+已有密钥可以直接配置这些 Secrets；本地构建设置对应的 `PAIRO_ANDROID_KEYSTORE`（文件绝对路径）及三个密码/别名环境变量，然后运行 `npm run android:release`。Secrets 必须由维护者保管与备份，不能提交源码。DPAPI 密码备份与原 Windows 账号绑定，复制本地目录到另一台电脑并不能自动解密；应另在个人密码管理器和离线备份中保存可恢复的签名信息。
+
+使用本机生成的签名构建：
+
+```powershell
+powershell -NoProfile -File scripts/build-android-release.ps1
+```
+
+未获得授权或未配置密钥时只执行 `npm run android:apk` 开发验收；发布工作流会明确失败，不发布未签名或调试签名替代品。

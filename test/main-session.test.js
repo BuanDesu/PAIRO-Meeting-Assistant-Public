@@ -128,3 +128,47 @@ test('empty remote streams detach old audio', () => {
   fx.attachRemoteStream(new fx.Stream());
   assert.equal(fx.document.getElementById('remote-audio').srcObject, null);
 });
+
+test('cancel waiting preserves context and a fresh request cannot be overwritten by an old result', async () => {
+  const finishes = [];
+  const fx = fixture({ askModel: () => new Promise(resolve => finishes.push(resolve)) });
+  fx.state.chatHistory = [{ role: 'user', content: 'keep this context' }];
+  fx.state.latestImage = 'keep this screenshot';
+  const old = fx.submitQuestion('old question'); await tick();
+  fx.document.getElementById('cancel-model').listeners.click();
+  assert.equal(fx.state.modelPending, 0);
+  assert.equal(fx.state.chatHistory.length, 1);
+  assert.equal(fx.state.latestImage, 'keep this screenshot');
+  const fresh = fx.submitQuestion('fresh question'); await tick();
+  finishes[1]('fresh answer'); await fresh;
+  finishes[0]('old answer'); await old;
+  assert.equal(fx.state.lastAnswer, 'fresh answer');
+  assert.equal(fx.state.modelPending, 0);
+  assert.equal(fx.state.chatHistory.length, 3);
+});
+
+test('retry uses corrected settings and a departed room discards the retry attachment', async () => {
+  let fail = true, received;
+  const fx = fixture({ askModel: async args => { if (fail) throw new Error('invalid API Key'); received = args; return 'answer'; } });
+  await fx.submitQuestion('retry question', 'screenshot');
+  assert.equal(fx.document.getElementById('retry-model').hidden, false);
+  fx.document.getElementById('llm-key').value = 'corrected-key';
+  fail = false;
+  fx.document.getElementById('retry-model').listeners.click(); await tick();
+  assert.equal(received.apiKey, 'corrected-key');
+  assert.equal(received.imageDataUrl, 'screenshot');
+  fx.document.getElementById('leave-room').listeners.click();
+  assert.equal(fx.state.retryRequest, null);
+});
+
+test('changing AI configuration invalidates a pending connection test', async () => {
+  let finish, captured;
+  const fx = fixture({ askModel: args => { captured = args; return new Promise(resolve => { finish = resolve; }); } });
+  const testing = fx.document.getElementById('test-model').listeners.click(); await tick();
+  assert.equal(captured.imageDataUrl, undefined);
+  assert.equal(captured.history, undefined);
+  fx.document.getElementById('llm-model').listeners.input();
+  assert.equal(captured.signal.aborted, true);
+  finish('late success'); await testing;
+  assert.match(fx.document.getElementById('model-test-status').textContent, /配置已更改/);
+});

@@ -12,10 +12,11 @@
 ## Android APK
 
 - Capacitor 8.5.2 将 dist/ 打包到 Android WebView；Android 原生 shell 默认直接显示手机角色，使用 WebRTC 接收画面/音频，并通过 CapacitorHttp 原生网络插件发起 LLM API 请求（不受 WebView CORS 限制）。
-- 最低 Android API 24（Android 7）；需要 JDK 21、Android SDK platform 36、build-tools 36.0.0 与 platform-tools。[Capacitor Android 文档](https://capacitorjs.com/docs/android)
+- 当前开发版最低 Android API 26（Android 8），用于支持官方原生扫码插件；已发布的 v0.1.0 仍支持 Android 7。需要 JDK 21、Android SDK platform 36、build-tools 36.0.0 与 platform-tools。[扫码插件要求](https://capacitorjs.com/docs/apis/barcode-scanner)
 - 安装 SDK 后设置 ANDROID_HOME / ANDROID_SDK_ROOT（默认 Android Studio 路径 LocalAppData/Android/Sdk）；如使用非默认 JDK，请设置 JAVA_HOME。Gradle 本地配置文件不会提交到仓库。
 - 运行 npm run android:sync 会先构建网页，并在 android/ 不存在时执行 cap add android，之后同步资源。运行 npm run android:apk 构建 debug APK。
-- Debug APK 由本机 Android debug keystore 自动签名，适合侧载和验收；未创建生产发布 keystore，因此不应直接上传 Play Store。
+- Debug APK 由本机 Android debug keystore 自动签名，只用于开发验收。正式版本使用 `npm run android:release`，必须提供固定签名环境变量；缺失时直接停止构建，不自动退回调试签名。配置方式见 [发布步骤](RELEASING.md)。
+- `prepare-android.mjs` 每次同步后都会写入统一版本、签名配置引用与相机权限，所以删除并重新生成未提交的 `android/` 目录也会保留这些配置。
 
 ## P2P 与 Android cleartext 边界
 
@@ -26,5 +27,5 @@ Android 包使用 androidScheme=http 与 Capacitor cleartext 设置，让 HTTPS/
 ## GitHub Actions
 
 - workflow_dispatch：构建两个工件并保存为 GitHub Actions artifacts。
-- 推送符合 v* 的 tag：构建并创建 GitHub Release，附加便携 EXE 与 debug APK。
-- GitHub Release APK 仍为 debug 签名；生产签名密钥不在仓库、工作流或此 MVP 中创建。
+- 推送符合 v* 的 tag：核对标签与项目版本，构建并创建 GitHub Release，附加便携 EXE、正式签名 APK 与 `SHA256SUMS.txt`。
+- 正式签名密钥只由本地受限目录或 GitHub Actions Secrets 提供，源码不包含私钥或密码。首次配置需要维护者明确授权。

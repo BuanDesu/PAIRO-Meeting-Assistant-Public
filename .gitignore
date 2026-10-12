@@ -8,3 +8,6 @@ Thumbs.db
 *.log
 release/
 android/
+.local-signing/
+*.keystore
+*.jks

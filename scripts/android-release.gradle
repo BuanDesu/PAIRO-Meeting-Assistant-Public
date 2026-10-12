@@ -1,0 +1,18 @@
+// Applied after Capacitor has generated/synced the Android project.
+def pairoVersion = new groovy.json.JsonSlurper().parse(new File(rootProject.projectDir, 'pairo-version.json'))
+android.defaultConfig.versionName = pairoVersion.version
+android.defaultConfig.versionCode = pairoVersion.androidVersionCode
+
+def signingFile = System.getenv('PAIRO_ANDROID_KEYSTORE')
+def signingPassword = System.getenv('PAIRO_ANDROID_STORE_PASSWORD')
+def signingAlias = System.getenv('PAIRO_ANDROID_KEY_ALIAS')
+def signingKeyPassword = System.getenv('PAIRO_ANDROID_KEY_PASSWORD')
+if (signingFile && signingPassword && signingAlias && signingKeyPassword) {
+    android.signingConfigs.create('pairoRelease') {
+        storeFile file(signingFile)
+        storePassword signingPassword
+        keyAlias signingAlias
+        keyPassword signingKeyPassword
+    }
+    android.buildTypes.release.signingConfig = android.signingConfigs.pairoRelease
+}
