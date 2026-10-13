@@ -59,7 +59,8 @@
       "package.json",
       "!node_modules/@capacitor/**/*",
       "!node_modules/html5-qrcode/**/*",
-      "!node_modules/qrcode/**/*"
+      "!node_modules/qrcode/**/*",
+      "!node_modules/!(ws)/**/*"
     ],
     "win": {
       "signExecutable": false

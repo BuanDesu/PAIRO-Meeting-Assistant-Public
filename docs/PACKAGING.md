@@ -8,10 +8,11 @@
 - 屏幕/窗口由 Electron desktopCapturer 枚举，Windows 上使用应用内来源选择对话框，不会自动选择首个屏幕。Electron 的 useSystemPicker 选项目前仅 macOS 15+ 实验支持，故 Windows 不依赖它。[Electron 屏幕捕获文档](https://www.electronjs.org/docs/latest/api/desktop-capturer)
 - 系统音频请求 Electron Windows loopback；麦克风由应用弹出每次会话权限确认。三组 Alt+Shift 快捷键通过 Electron globalShortcut 注册，可在窗口未聚焦时触发。[Electron 全局快捷键文档](https://www.electronjs.org/docs/latest/api/global-shortcut)
 - EXE 未做 Authenticode 签名，Windows SmartScreen 可能提示未知发布者。自解压包由本机 NSIS 3.12 生成；构建脚本自动探测 Program Files 下的 NSIS，非默认目录可通过 NSIS_HOME 指定。[electron-builder Windows 目标文档](https://www.electron.build/win)
+- 桌面运行包仅保留服务端所需的 `ws`；二维码与 Capacitor 等前端依赖由 Vite 编译进网页资源，不把其 Node 工具链一并携带。首次与重复启动的实测、重复测量命令见 [启动与体积记录](STARTUP_MEASUREMENTS.md)。
 
 ## Android APK
 
-- Capacitor 8.5.2 将 dist/ 打包到 Android WebView；Android 原生 shell 默认直接显示手机角色，使用 WebRTC 接收画面/音频，并通过 CapacitorHttp 原生网络插件发起 LLM API 请求（不受 WebView CORS 限制）。
+- Capacitor 8.5.2 将 dist/ 打包到 Android WebView；Android 原生 shell 默认直接显示手机角色，使用 WebRTC 接收画面/音频。流式模型请求由本项目的 ModelStream 原生插件发送、逐段返回并支持取消；非流式配置检测使用 CapacitorHttp，不依赖 WebView CORS。
 - 当前开发版最低 Android API 26（Android 8），用于支持官方原生扫码插件；已发布的 v0.1.0 仍支持 Android 7。需要 JDK 21、Android SDK platform 36、build-tools 36.0.0 与 platform-tools。[扫码插件要求](https://capacitorjs.com/docs/apis/barcode-scanner)
 - 安装 SDK 后设置 ANDROID_HOME / ANDROID_SDK_ROOT（默认 Android Studio 路径 LocalAppData/Android/Sdk）；如使用非默认 JDK，请设置 JAVA_HOME。Gradle 本地配置文件不会提交到仓库。
 - 运行 npm run android:sync 会先构建网页，并在 android/ 不存在时执行 cap add android，之后同步资源。运行 npm run android:apk 构建 debug APK。
