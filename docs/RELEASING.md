@@ -10,7 +10,7 @@
 
 ## 自动打包发布
 
-推送指向已验证提交的 `v<版本>` 标签会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE 和 Android 正式签名 APK，测试通过、两个产物都生成并验证后才创建或补全 Release。`npm run release:check` 检查标签、package.json 与锁文件版本，Android 内部版本也由同一版本生成。
+推送指向已验证提交的 `v<版本>` 标签会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE / 目录 ZIP 和 Android 正式签名 APK，测试通过、三份文件都生成并验证后才创建或补全 Release。`npm run release:check` 检查标签、package.json 与锁文件版本，Android 内部版本也由同一版本生成。
 
 发布文件名：
 

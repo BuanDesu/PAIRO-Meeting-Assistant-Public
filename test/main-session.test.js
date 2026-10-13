@@ -130,6 +130,22 @@ test('empty remote streams detach old audio', () => {
   assert.equal(fx.document.getElementById('remote-audio').srcObject, null);
 });
 
+test('native picker cancellation gives Chinese guidance without creating capture or a room', async () => {
+  const error = Object.assign(new Error('Invalid capture constraints'), { name: 'TypeError' });
+  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, getSignalInfo: async () => ({ signalBase: 'http://localhost:8787', lanAddresses: [] }), readPreferences: async () => ({}) } },
+    navigator: { mediaDevices: { getDisplayMedia: async () => { throw error; } } } });
+  await tick(); await fx.startDesktop();
+  assert.equal(fx.state.displayStream, null); assert.equal(fx.state.peer, null);
+  assert.equal(fx.document.getElementById('start-share').disabled, false);
+  assert.match(fx.document.getElementById('desktop-status').textContent, /分享未开始/);
+  assert.ok(!fx.document.getElementById('toast').textContent.includes('Invalid'));
+  const previous = { kind: 'video', stop() { this.stopped = true; } };
+  fx.state.displayStream = new fx.Stream([previous]); fx.state.peer = {};
+  await fx.changeDesktopCapture();
+  assert.equal(previous.stopped, undefined);
+  assert.match(fx.document.getElementById('toast').textContent, /继续分享原来的画面/);
+});
+
 test('changing capture retains the paired room, microphone and conversation; cancellation keeps the original source', async () => {
   const track = kind => ({ kind, addEventListener() {}, stop() { this.stopped = true; } });
   const previous = track('video'), next = track('video'), microphone = track('audio');

@@ -252,6 +252,11 @@ async function scanPairing() {
   } finally { $('scan-pairing').disabled = false; }
 }
 
+function captureNotSelected(error) {
+  return error?.name === 'NotAllowedError' || error?.name === 'AbortError'
+    || Boolean(window.desktopBridge && error?.message === 'Invalid capture constraints');
+}
+
 async function startDesktop() {
   if (!navigator.mediaDevices?.getDisplayMedia) {
     toast('当前浏览器不支持屏幕分享，请使用桌面 Chromium 浏览器');
@@ -299,10 +304,12 @@ async function startDesktop() {
     toast('配对信息已生成，可在手机端扫码或手动输入');
   } catch (error) {
     if (!current()) { peer?.disconnect(); return; }
+    const message = !state.displayStream && captureNotSelected(error)
+      ? '屏幕分享未开始，请重试并选择要分享的屏幕或窗口。' : error.message || '无法开启屏幕分享';
     if (state.displayStream) stopDesktop(false);
     else $('start-share').disabled = false;
-    setStatus('desktop', error.message || '无法开启屏幕分享');
-    toast(error.message || '无法开启屏幕分享');
+    setStatus('desktop', message);
+    toast(message);
   }
 }
 
@@ -349,7 +356,7 @@ async function changeDesktopCapture() {
     previous.getTracks().forEach(track => track.stop());
     toast('共享内容已更换，手机配对与声音设置保持不变');
   } catch (error) {
-    if (current()) toast(error.name === 'NotAllowedError' || error.name === 'AbortError' ? '已取消更换，继续分享原来的画面' : '更换未完成：' + error.message);
+    if (current()) toast(captureNotSelected(error) ? '未更换共享内容，继续分享原来的画面' : '更换未完成：' + error.message);
   } finally {
     if (!accepted) display?.getTracks().forEach(track => track.stop());
     if (current()) {
