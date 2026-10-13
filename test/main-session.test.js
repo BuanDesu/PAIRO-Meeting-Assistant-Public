@@ -36,7 +36,7 @@ function fixture(overrides = {}) {
     ...overrides,
   };
   vm.createContext(context);
-  vm.runInContext(source + '\nthis.review={state,submitQuestion,startDesktop,setRole,attachRemoteStream};', context);
+  vm.runInContext(source + '\nthis.review={state,submitQuestion,startDesktop,changeDesktopCapture,setRole,attachRemoteStream,handleMobileMessage};', context);
   document.getElementById('llm-key').value = 'temporary-test-key';
   return { ...context.review, document, Stream };
 }
@@ -129,6 +129,40 @@ test('empty remote streams detach old audio', () => {
   assert.equal(fx.document.getElementById('remote-audio').srcObject, null);
 });
 
+test('changing capture retains the paired room, microphone and conversation; cancellation keeps the original source', async () => {
+  const track = kind => ({ kind, addEventListener() {}, stop() { this.stopped = true; } });
+  const previous = track('video'), next = track('video'), microphone = track('audio');
+  let rejectPicker = false, requestedAudio;
+  const fx = fixture({ navigator: { mediaDevices: { getDisplayMedia: async options => {
+    requestedAudio = options.audio;
+    if (rejectPicker) throw Object.assign(new Error('cancelled'), { name: 'NotAllowedError' });
+    return new fx.Stream([next]);
+  } } } });
+  const peer = fx.state.peer = { replaceLocalStream: async stream => { peer.stream = stream; } };
+  fx.state.displayStream = new fx.Stream([previous]); fx.state.outgoingStream = new fx.Stream([previous, microphone]);
+  fx.state.room = 'EXISTING'; fx.state.latestImage = 'keep attachment';
+  await fx.changeDesktopCapture();
+  assert.equal(requestedAudio, false); assert.equal(previous.stopped, true); assert.equal(microphone.stopped, undefined);
+  assert.deepEqual([...peer.stream.getTracks()], [next, microphone]);
+  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, 'EXISTING'); assert.equal(fx.state.latestImage, 'keep attachment');
+  rejectPicker = true;
+  await fx.changeDesktopCapture();
+  assert.equal(next.stopped, undefined); assert.equal(fx.state.displayStream.getVideoTracks()[0], next);
+  assert.equal(fx.state.captureSwitchPending, false); assert.equal(fx.document.getElementById('change-share').disabled, false);
+});
+
+test('ending the session during capture replacement releases the new source without resurrecting the room', async () => {
+  let finish;
+  const track = { kind: 'video', stop() { this.stopped = true; } };
+  const fx = fixture({ navigator: { mediaDevices: { getDisplayMedia: () => new Promise(resolve => { finish = resolve; }) } } });
+  const old = { kind: 'video', stop() {} };
+  fx.state.displayStream = new fx.Stream([old]); fx.state.outgoingStream = new fx.Stream([old]);
+  fx.state.peer = { disconnect() {}, replaceLocalStream: async () => { throw new Error('Must not replace a departed session'); } };
+  const changing = fx.changeDesktopCapture(); fx.setRole('mobile');
+  finish(new fx.Stream([track])); await changing;
+  assert.equal(track.stopped, true); assert.equal(fx.state.peer, null); assert.equal(fx.state.displayStream, null);
+});
+
 test('cancel waiting preserves context and a fresh request cannot be overwritten by an old result', async () => {
   const finishes = [];
   const fx = fixture({ askModel: () => new Promise(resolve => finishes.push(resolve)) });
@@ -191,4 +225,21 @@ test('partial answers show before completion but cancellation rejects late updat
   assert.equal(pending.removed, true);
   assert.equal(fx.state.lastAnswer, '');
   assert.equal(sent.length, 0);
+});
+
+test('leaving during screenshot decoding discards image and acknowledgment even if decoding finishes late', async () => {
+  let finish, decodeSignal;
+  const sent = [];
+  const fx = fixture({ decodeScreenshot: (_message, options) => { decodeSignal = options.signal; return new Promise(resolve => { finish = resolve; }); }, validScreenshotId: () => true });
+  fx.state.role = 'mobile';
+  fx.state.peer = { disconnect() {}, send: async message => sent.push(message) };
+  const receiving = fx.handleMobileMessage({ type: 'screenshot', id: 'old-room', image: 'private-image' });
+  await tick();
+  fx.document.getElementById('leave-room').listeners.click();
+  assert.equal(decodeSignal.aborted, true);
+  fx.state.peer = { send: async message => sent.push(message) };
+  finish(); await receiving;
+  assert.equal(sent.length, 0);
+  assert.equal(fx.state.latestImage, '');
+  assert.equal(fx.state.screenshotReceivers.size, 0);
 });

@@ -51,3 +51,5 @@ powershell -NoProfile -File scripts/build-android-release.ps1
 ```
 
 未获得授权或未配置密钥时只执行 `npm run android:apk` 开发验收；发布工作流会明确失败，不发布未签名或调试签名替代品。
+
+2026-10-13 维护者已明确授权并完成首次固定签名配置：本机目录受限保存、四项 Actions Secrets 上传及正式 APK 签名检查通过。今后应复用现有密钥；私钥不在源码中。当前正式证书 SHA-256 指纹为 `b9ccb30df1c5cfec3e0f2eb6baffe57fe01ee13d045dfea8612c66b328eed400`，可用 `apksigner verify --print-certs` 核对后续 APK。

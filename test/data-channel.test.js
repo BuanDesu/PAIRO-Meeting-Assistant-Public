@@ -76,3 +76,21 @@ test('incomplete incoming transfers expire without delivering partial content', 
   assert.equal(errors.length, 1);
   transport.dispose();
 });
+
+test('per-request progress reflects sent bytes and cancellation releases backpressure without closing the channel', async () => {
+  const channel = new Channel(), progress = [];
+  const transport = new DataChannelTransport(channel, { maxMessageSize: () => 96 });
+  await transport.send({ type: 'text', text: 'a'.repeat(500) }, { onProgress: fraction => progress.push(fraction) });
+  assert.equal(progress[0], 0); assert.equal(progress.at(-1), 1);
+  assert.ok(progress.length > 3);
+  assert.ok(progress.every((value, index) => index === 0 || value >= progress[index - 1]));
+  channel.bufferedAmount = 512 * 1024;
+  const controller = new AbortController();
+  const request = transport.send({ type: 'text', text: 'cancel' }, { signal: controller.signal });
+  await new Promise(resolve => setImmediate(resolve)); controller.abort();
+  await assert.rejects(request);
+  channel.bufferedAmount = 0;
+  await transport.send({ type: 'text', text: 'next request' });
+  assert.equal(channel.readyState, 'open');
+  transport.dispose();
+});

@@ -22,7 +22,8 @@ export class DataChannelTransport {
     channel.bufferedAmountLowThreshold = LOW_WATER;
   }
 
-  send(message) {
+  send(message, { onProgress = () => {}, signal } = {}) {
+    if (signal?.aborted) return Promise.reject(signal.reason || new Error('发送已取消'));
     if (this.closed || this.channel.readyState !== 'open') return Promise.reject(new Error('P2P 数据通道尚未就绪'));
     let text, bytes;
     try { text = JSON.stringify(message); bytes = encoder.encode(text); }
@@ -31,19 +32,21 @@ export class DataChannelTransport {
     if (this.queueBytes + bytes.length > MAX_BYTES) return Promise.reject(new Error('发送队列繁忙，请稍后重试'));
     this.queueBytes += bytes.length;
     const operation = this.tail.catch(() => {}).then(async () => {
-      this.checkOpen();
+      this.checkOpen(signal);
+      onProgress(0);
       const advertised = this.maxMessageSize();
       const limit = advertised > 0 ? advertised : 65536;
       if (bytes.length <= limit && bytes.length <= 16384) {
-        await this.waitWritable();
+        await this.waitWritable(signal);
         this.channel.send(text);
+        onProgress(1);
         return;
       }
       const chunkSize = Math.floor(Math.min(limit, 16384)) - HEADER_BYTES;
       if (chunkSize < 1) throw new Error('对端数据通道消息上限过小');
       const id = this.nextId = (this.nextId + 1) >>> 0;
       for (let offset = 0; offset < bytes.length; offset += chunkSize) {
-        await this.waitWritable();
+        await this.waitWritable(signal);
         const part = bytes.subarray(offset, offset + chunkSize);
         const frame = new Uint8Array(HEADER_BYTES + part.length);
         const header = new DataView(frame.buffer);
@@ -53,6 +56,7 @@ export class DataChannelTransport {
         header.setUint32(12, offset);
         frame.set(part, HEADER_BYTES);
         this.channel.send(frame.buffer);
+        onProgress((offset + part.length) / bytes.length);
       }
     }).finally(() => { this.queueBytes -= bytes.length; });
     this.tail = operation;
@@ -61,12 +65,13 @@ export class DataChannelTransport {
     return operation;
   }
 
-  checkOpen() {
+  checkOpen(signal) {
+    signal?.throwIfAborted();
     if (this.closed || this.channel.readyState !== 'open') throw new Error('数据通道已关闭');
   }
 
-  async waitWritable() {
-    this.checkOpen();
+  async waitWritable(requestSignal) {
+    this.checkOpen(requestSignal);
     if (this.channel.bufferedAmount <= LOW_WATER) return;
     await new Promise((resolve, reject) => {
       const signal = this.controller.signal;
@@ -77,6 +82,7 @@ export class DataChannelTransport {
         this.channel.removeEventListener('close', failed);
         this.channel.removeEventListener('error', failed);
         signal.removeEventListener('abort', failed);
+        requestSignal?.removeEventListener('abort', failed);
       };
       const ready = () => { cleanup(); resolve(); };
       const failed = () => { cleanup(); reject(new Error('数据通道已关闭或发送超时')); };
@@ -84,11 +90,12 @@ export class DataChannelTransport {
       this.channel.addEventListener('close', failed);
       this.channel.addEventListener('error', failed);
       signal.addEventListener('abort', failed, { once: true });
+      requestSignal?.addEventListener('abort', failed, { once: true });
       timer = setTimeout(failed, this.timeoutMs);
-      if (signal.aborted || this.channel.readyState !== 'open') failed();
+      if (signal.aborted || requestSignal?.aborted || this.channel.readyState !== 'open') failed();
       else if (this.channel.bufferedAmount <= LOW_WATER) ready();
     });
-    this.checkOpen();
+    this.checkOpen(requestSignal);
   }
 
   receive(data) {

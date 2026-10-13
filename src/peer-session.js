@@ -67,6 +67,33 @@ export class PeerSession {
     if (this.pc) this.addLocalTracks();
   }
 
+  async replaceLocalStream(stream) {
+    if (this.closed) throw new Error('会话已结束');
+    const pc = this.pc;
+    if (!pc) { this.localStream = stream; return; }
+    const remaining = [...stream.getTracks()], changes = [];
+    for (const sender of pc.getSenders().filter(item => item.track)) {
+      const index = remaining.findIndex(track => track.kind === sender.track.kind);
+      if (index < 0) throw new Error('音视频轨道已变化，请停止后重新开始分享');
+      changes.push({ sender, previous: sender.track, next: remaining.splice(index, 1)[0] });
+    }
+    if (remaining.length) throw new Error('音视频轨道已变化，请停止后重新开始分享');
+    const applied = [];
+    try {
+      for (const change of changes) {
+        if (!this.isCurrent(pc)) throw new Error('连接正在恢复，请稍后更换共享内容');
+        if (change.previous === change.next) continue;
+        await change.sender.replaceTrack(change.next);
+        applied.push(change);
+      }
+      if (!this.isCurrent(pc)) throw new Error('连接正在恢复，请稍后更换共享内容');
+      this.localStream = stream;
+    } catch (error) {
+      if (this.isCurrent(pc)) for (const change of applied.reverse()) await change.sender.replaceTrack(change.previous).catch(() => {});
+      throw error;
+    }
+  }
+
   async connect(baseUrl, room) {
     if (this.signal) this.disconnect();
     this.closed = false;
@@ -431,9 +458,9 @@ export class PeerSession {
     }
   }
 
-  send(message) {
+  send(message, options) {
     if (!this.transport) return Promise.reject(new Error('P2P 数据通道尚未就绪'));
-    return this.transport.send(message);
+    return this.transport.send(message, options);
   }
 
   approvePeer(allow) {

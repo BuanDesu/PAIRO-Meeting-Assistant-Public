@@ -35,13 +35,16 @@
               <div class="feed-controls">
                 <button class="button button-primary" id="start-share" type="button"><span>◉</span> 开始屏幕分享</button>
                 <button class="button button-quiet" id="take-shot" type="button" disabled>⌗ 截图 <kbd>Alt ⇧ S</kbd></button>
+                <button class="button button-quiet" id="take-region-shot" type="button" disabled>区域截图</button>
+                <button class="button button-quiet" id="change-share" type="button" disabled>更换共享内容</button>
                 <button class="button button-quiet" id="toggle-voice" type="button" disabled>◖ 语音提问 <kbd>Alt ⇧ M</kbd></button>
                 <button class="button button-danger" id="stop-share" type="button" disabled>停止</button>
               </div>
+              <div class="shot-progress" id="shot-progress" hidden><progress id="shot-progress-bar" max="100" value="0" aria-label="截图传输进度"></progress><span id="shot-progress-text" role="status"></span></div>
               <div class="capture-options">
                 <label class="check-row"><input id="capture-system-audio" type="checkbox" /><span>共享系统音频</span></label>
                 <label class="check-row"><input id="capture-mic" type="checkbox" checked /><span>同时发送麦克风音频</span></label>
-                <span class="hint">系统音频仅在勾选后请求</span>
+                <span class="hint">系统音频可能包含其他应用声音。更换共享内容保留配对与声音设置；调整声音需停止后重新开始。</span>
               </div>
               <div class="shortcut-note"><span class="shortcut-key">Alt + Shift + S</span><span>截取当前共享画面</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + M</span><span>开始 / 停止语音识别</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + A</span><span>切换手机自动回答</span></div>
             </section>
@@ -123,7 +126,14 @@
           </div>
         </section>
       </main>
-      <footer class="app-footer"><span>PAIRO <span class="footer-dot">·</span> P2P MEETING COPILOT</span><span>屏幕与音频直连；信令仅转发协商信息</span><a href="./docs/PROJECT_FLOW.md" target="_blank" rel="noreferrer">查看项目流程</a></footer>
+      <dialog id="region-dialog" class="region-dialog" aria-labelledby="region-title">
+        <h2 id="region-title">选择本次截图的区域</h2><p>拖动框选要发送的内容，也可以输入下方百分比。区域选择只影响本次截图；实时分享范围由此前选择的屏幕或窗口决定。</p>
+        <div class="region-preview-wrap"><canvas id="region-preview" aria-label="截图区域预览"></canvas><div id="region-box" class="region-box" hidden></div></div>
+        <div class="region-fields"><label>左侧位置 %<input id="region-x" type="number" min="0" max="100" step="0.01" /></label><label>顶部位置 %<input id="region-y" type="number" min="0" max="100" step="0.01" /></label><label>宽度 %<input id="region-width" type="number" min="0" max="100" step="0.01" /></label><label>高度 %<input id="region-height" type="number" min="0" max="100" step="0.01" /></label></div>
+        <div class="pairing-actions"><button id="region-cancel" class="button button-quiet" type="button">取消</button><button id="region-send" class="button button-primary" type="button" disabled>发送所选区域</button></div>
+      </dialog>
+      <dialog id="diagnostics-dialog" class="region-dialog" aria-labelledby="diagnostics-title"><h2 id="diagnostics-title">连接诊断</h2><p>复制下方信息附到问题描述，方便排查连接。这里只记录版本、连接状态和媒体轨道数量；不包含画面、问题、Key、地址或房间码。</p><textarea id="diagnostics-text" class="text-input" rows="14" readonly aria-label="可复制的诊断信息"></textarea><div class="pairing-actions"><button id="close-diagnostics" class="button button-quiet" type="button">关闭</button><button id="copy-diagnostics" class="button button-primary" type="button">复制诊断信息</button></div></dialog>
+      <footer class="app-footer"><span>PAIRO <span class="footer-dot">·</span> P2P MEETING COPILOT</span><span>屏幕与音频直连；信令仅转发协商信息</span><button id="show-diagnostics" class="text-button" type="button">连接诊断</button></footer>
       <div class="toast" id="toast" role="status" aria-live="polite"></div>
     </div>
     <script type="module" src="/src/main.js"></script>

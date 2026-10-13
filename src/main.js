@@ -1,10 +1,15 @@
 import './styles.css';
 import './pairing.css';
+import './screenshot.css';
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { PeerSession } from './peer-session.js';
 import { askModel } from './llm.js';
 import { defaultRoleForPlatform } from './platform.js';
 import { createPairingCode, parsePairingCode, checkSignaling, scanFailureMessage } from './pairing.js';
+import { ScreenshotTransfers, validScreenshotId } from './screenshot-transfer.js';
+import { cropCanvas, screenshotPayload, decodeScreenshot } from './screenshot.js';
+import { selectScreenshotRegion } from './screenshot-region.js';
+import { connectionDiagnostics } from './diagnostics.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -15,6 +20,9 @@ const state = {
   modelQueue: Promise.resolve(), modelPending: 0, nativeSignalBase: '',
   pairingGeneration: 0,
   modelNodes: new Set(), retryRequest: null, configController: null, configGeneration: 0,
+  screenshotTransfers: null, screenshotController: null, screenshotGeneration: 0, screenshotBusy: false,
+  screenshotReceivers: new Set(),
+  captureSwitchPending: false,
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
@@ -46,6 +54,16 @@ function savePreferences() {
 }
 
 function resetConversation() {
+  state.screenshotGeneration += 1;
+  state.screenshotController?.abort();
+  state.screenshotController = null;
+  state.screenshotTransfers?.cancelAll();
+  for (const controller of state.screenshotReceivers) controller.abort();
+  state.screenshotReceivers.clear();
+  state.screenshotBusy = false;
+  $('shot-progress').hidden = true;
+  $('take-shot').disabled = !state.displayStream;
+  $('take-region-shot').disabled = !state.displayStream;
   cancelModelRequests(false);
   state.retryRequest = null;
   updateModelQueue();
@@ -133,9 +151,11 @@ function setFeedActive(active) {
   $('desktop-feed-status').textContent = active ? '正在分享' : '未分享';
   $('desktop-feed-status').classList.toggle('live', active);
   $('take-shot').disabled = !active;
+  $('take-region-shot').disabled = !active;
   $('toggle-voice').disabled = !active;
   $('stop-share').disabled = !active;
   $('start-share').disabled = active;
+  $('change-share').disabled = !active || state.captureSwitchPending;
 }
 function makePeer(role) {
   const peer = new PeerSession({
@@ -247,7 +267,7 @@ async function startDesktop() {
     });
     if (!current()) { display.getTracks().forEach(track => track.stop()); return; }
     state.displayStream = display;
-    display.getVideoTracks()[0].addEventListener('ended', () => { if (current()) stopDesktop(true); }, { once: true });
+    display.getVideoTracks()[0].addEventListener('ended', () => { if (current() && state.displayStream === display) stopDesktop(true); }, { once: true });
     $('stop-share').disabled = false;
     $('local-preview').srcObject = display;
     const tracks = [...display.getTracks()];
@@ -268,6 +288,7 @@ async function startDesktop() {
     $('room-code').textContent = state.room;
     $('copy-code').disabled = false;
     state.peer = peer = makePeer('desktop');
+    state.screenshotTransfers = new ScreenshotTransfers({ send: (message, options) => peer.send(message, options) });
     peer.setLocalStream(state.outgoingStream);
     await peer.connect($('desktop-signal').value, state.room);
     if (!current() || state.peer !== peer) { peer.disconnect(); return; }
@@ -286,7 +307,9 @@ async function startDesktop() {
 
 function stopDesktop(showToast = true) {
   state.captureGeneration += 1;
+  state.captureSwitchPending = false;
   resetConversation();
+  state.screenshotTransfers = null;
   stopVoice(false);
   if (state.peer) state.peer.disconnect();
   state.peer = null;
@@ -305,22 +328,66 @@ function stopDesktop(showToast = true) {
   if (showToast) toast('桌面分享已停止');
 }
 
-async function takeScreenshot() {
+async function changeDesktopCapture() {
+  if (!state.displayStream || !state.peer || state.captureSwitchPending || state.screenshotBusy) return;
+  const generation = state.captureGeneration, peer = state.peer, previous = state.displayStream;
+  const current = () => state.role === 'desktop' && generation === state.captureGeneration && state.peer === peer;
+  let display, accepted = false;
+  state.captureSwitchPending = true; $('change-share').disabled = true;
+  $('take-shot').disabled = true; $('take-region-shot').disabled = true;
+  try {
+    display = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 12, max: 20 } }, audio: previous.getAudioTracks().length > 0 });
+    if (!current()) return;
+    const retained = state.outgoingStream.getTracks().filter(track => !previous.getTracks().includes(track));
+    const outgoing = new MediaStream([...display.getTracks(), ...retained]);
+    await peer.replaceLocalStream(outgoing);
+    if (!current()) return;
+    state.displayStream = display; state.outgoingStream = outgoing; accepted = true;
+    $('local-preview').srcObject = display;
+    display.getVideoTracks()[0].addEventListener('ended', () => { if (current() && state.displayStream === display) stopDesktop(true); }, { once: true });
+    previous.getTracks().forEach(track => track.stop());
+    toast('共享内容已更换，手机配对与声音设置保持不变');
+  } catch (error) {
+    if (current()) toast(error.name === 'NotAllowedError' || error.name === 'AbortError' ? '已取消更换，继续分享原来的画面' : '更换未完成：' + error.message);
+  } finally {
+    if (!accepted) display?.getTracks().forEach(track => track.stop());
+    if (current()) {
+      state.captureSwitchPending = false;
+      $('change-share').disabled = !state.displayStream;
+      $('take-shot').disabled = !state.displayStream; $('take-region-shot').disabled = !state.displayStream;
+    }
+  }
+}
+
+async function takeScreenshot(region = false) {
   const video = $('local-preview');
   if (!video.videoWidth || !video.videoHeight) return toast('画面尚未准备好，请稍后重试');
+  if (state.screenshotBusy) return toast('上一张截图仍在处理，请稍后再试');
+  if (state.captureSwitchPending) return toast('请先完成共享内容选择');
+  const peer = state.peer, transfers = state.screenshotTransfers;
+  if (!peer || peer.phase !== 'connected' || !transfers) return toast('请先等待手机连接成功');
+  const generation = state.screenshotGeneration;
+  const current = () => generation === state.screenshotGeneration && peer === state.peer;
+  const controller = state.screenshotController = new AbortController();
+  state.screenshotBusy = true;
+  $('take-shot').disabled = true; $('take-region-shot').disabled = true;
   try {
-    const maxWidth = 1440;
-    const scale = Math.min(1, maxWidth / video.videoWidth);
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
-    const image = canvas.toDataURL('image/jpeg', 0.74);
-    if (image.length > 3_500_000) return toast('截图仍然过大，请缩小窗口后重试');
-    await state.peer.send({ type: 'screenshot', image, width: canvas.width, height: canvas.height, at: Date.now() });
-    toast('截图已加密发送到手机');
+    const canvas = region ? await selectScreenshotRegion(video, controller.signal) : cropCanvas(video);
+    if (!canvas || !current()) return;
+    let payload;
+    try { payload = screenshotPayload(canvas); } finally { canvas.width = 0; canvas.height = 0; }
+    await transfers.transfer(payload, progress => {
+      if (!current()) return;
+      $('shot-progress').hidden = false;
+      $('shot-progress-bar').value = Math.floor(progress.fraction * 100);
+      $('shot-progress-text').textContent = progress.phase === 'received' ? '手机已确认收到截图'
+        : progress.phase === 'waiting' ? '发送完成，等待手机确认…' : `正在加密发送截图 ${Math.floor(progress.fraction * 100)}%`;
+    });
+    if (current()) toast('手机已确认收到截图');
   } catch (error) {
-    toast(error.message || '截图发送失败，请确认手机已连接');
+    if (current() && !controller.signal.aborted) { $('shot-progress-text').textContent = error.message || '截图发送失败'; toast(error.message || '截图发送失败，请确认手机已连接'); }
+  } finally {
+    if (current()) { state.screenshotBusy = false; state.screenshotController = null; $('take-shot').disabled = !state.displayStream; $('take-region-shot').disabled = !state.displayStream; }
   }
 }
 
@@ -399,6 +466,7 @@ async function sendRecognizedQuestion() {
 }
 
 function handleDesktopMessage(message) {
+  if (message.type === 'screenshot-ack') { state.screenshotTransfers?.acknowledge(message); return; }
   if (message.type === 'answer') {
     $('desktop-answer').textContent = String(message.text || '');
     toast('手机端 AI 回复已同步');
@@ -454,9 +522,20 @@ async function handleMobileMessage(message) {
     return;
   }
   if (message.type === 'screenshot') {
-    if (typeof message.image !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/i.test(message.image)) return;
+    const peer = state.peer, generation = state.screenshotGeneration;
+    if (state.screenshotReceivers.size >= 2) return;
+    const controller = new AbortController(); state.screenshotReceivers.add(controller);
+    const current = () => state.peer === peer && generation === state.screenshotGeneration && !controller.signal.aborted;
+    try { await decodeScreenshot(message, { signal: controller.signal }); }
+    catch {
+      if (current() && validScreenshotId(message.id)) await peer?.send({ type: 'screenshot-ack', id: message.id, status: 'rejected' }).catch(() => {});
+      return;
+    } finally { state.screenshotReceivers.delete(controller); }
+    if (!current()) return;
     setLatestImage(message.image);
     addChatMessage('incoming', '收到桌面截图', message.image);
+    if (validScreenshotId(message.id)) await peer?.send({ type: 'screenshot-ack', id: message.id, status: 'received' }).catch(() => {});
+    if (!current()) return;
     if ($('auto-answer').checked) submitQuestion('请分析这张桌面截图中的问题，并给出简洁、准确的建议。', message.image);
     return;
   }
@@ -543,7 +622,9 @@ $('desktop-tab').addEventListener('click', () => setRole('desktop'));
 $('mobile-tab').addEventListener('click', () => setRole('mobile'));
 $('start-share').addEventListener('click', startDesktop);
 $('stop-share').addEventListener('click', () => stopDesktop(true));
-$('take-shot').addEventListener('click', takeScreenshot);
+$('change-share').addEventListener('click', changeDesktopCapture);
+$('take-shot').addEventListener('click', () => takeScreenshot());
+$('take-region-shot').addEventListener('click', () => takeScreenshot(true));
 $('toggle-voice').addEventListener('click', () => state.voiceActive ? stopVoice(true) : startVoice());
 $('copy-code').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(state.room || ''); toast('房间码已复制'); }
@@ -661,6 +742,16 @@ $('remove-attachment').addEventListener('click', () => {
   state.latestImage = '';
   $('attachment-strip').hidden = true;
   $('attachment-thumb').removeAttribute('src');
+});
+$('show-diagnostics').addEventListener('click', () => {
+  $('diagnostics-text').value = JSON.stringify(connectionDiagnostics({ version: __APP_VERSION__, platform: Capacitor.getPlatform(),
+    role: state.role, peer: state.peer, localStream: state.outgoingStream, remoteStream: $('remote-preview').srcObject, modelPending: state.modelPending }), null, 2);
+  $('diagnostics-dialog').showModal();
+});
+$('close-diagnostics').addEventListener('click', () => $('diagnostics-dialog').close());
+$('copy-diagnostics').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('diagnostics-text').value); toast('诊断信息已复制，可附在问题描述中'); }
+  catch { $('diagnostics-text').focus(); $('diagnostics-text').select(); toast('请手动复制已选中的诊断信息'); }
 });
 $('speak-answer').addEventListener('click', () => {
   if (!state.lastAnswer || !('speechSynthesis' in window)) return toast('当前没有可朗读的答复');

@@ -4,4 +4,5 @@ contextBridge.exposeInMainWorld('desktopBridge', {
   readPreferences: async () => ({}),
   writePreferences: async () => {},
   onShortcut: () => {},
+  saveQaSnapshot: name => ipcRenderer.invoke('ui-smoke-snapshot', name),
 });
