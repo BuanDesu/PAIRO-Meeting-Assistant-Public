@@ -4,13 +4,13 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createServer } = require('node:http');
-const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell } = require('electron');
 const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
 const { createPreferencesStore } = require('./preferences.cjs');
 const { lanAddresses } = require('./network.cjs');
 const { showCapturePicker } = require('./capture-picker.cjs');
 
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || (app.isPackaged ? path.dirname(app.getPath('exe')) : '');
 if (portableDir) {
   const userData = path.join(portableDir, 'PAIRO-data');
   try {
@@ -233,6 +233,10 @@ ipcMain.handle('desktop:preferences-read', event => {
 ipcMain.handle('desktop:preferences-write', (event, value) => {
   requireTrustedIpc(event);
   return preferencesStore.write(value);
+});
+ipcMain.handle('desktop:open-releases', event => {
+  requireTrustedIpc(event);
+  return shell.openExternal('https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest');
 });
 
 app.whenReady().then(async () => {

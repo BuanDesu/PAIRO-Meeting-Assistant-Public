@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, copyFile, writeFile, stat, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
@@ -8,14 +8,25 @@ import WebSocket from 'ws';
 if (process.platform !== 'win32') throw new Error('Portable startup measurements require Windows.');
 const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
 const unpacked = process.argv.includes('--unpacked');
+const zipDirectory = process.argv.includes('--zip');
+if (unpacked && zipDirectory) throw new Error('Choose either --unpacked or --zip');
 const label = process.argv[2] || 'measurement';
 if (!/^[a-z][a-z0-9-]{0,40}$/.test(label)) throw new Error('Use a short lowercase measurement name.');
 const folder = new URL('../release/performance-qa/' + label + '/', import.meta.url);
 await mkdir(folder, { recursive: true });
 const name = `Pairo-Meeting-Copilot-${pkg.version}-win-x64.exe`;
-const exe = unpacked ? new URL('../release/win-unpacked/' + encodeURIComponent(pkg.build.productName + '.exe'), import.meta.url) : new URL(name, folder);
-if (!unpacked) await copyFile(new URL('../release/' + name, import.meta.url), exe);
-const profileExists = await stat(new URL('PAIRO-data/', folder)).then(() => true, () => false);
+let initialExtractSeconds;
+if (zipDirectory) {
+  const extractStart = performance.now();
+  const extracted = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', fileURLToPath(new URL('./extract-directory.ps1', import.meta.url)), '-SourceZip', fileURLToPath(new URL('../release/Pairo-Meeting-Copilot-' + pkg.version + '-win-x64-folder.zip', import.meta.url)), '-Destination', fileURLToPath(new URL('app/', folder))], { windowsHide: true, stdio: 'inherit' });
+  if (extracted.error) throw extracted.error;
+  if (extracted.status !== 0) throw new Error('Directory ZIP could not be extracted');
+  initialExtractSeconds = Number(((performance.now() - extractStart) / 1000).toFixed(3));
+}
+const exe = zipDirectory ? new URL('app/' + encodeURIComponent(pkg.build.productName + '.exe'), folder) : unpacked ? new URL('../release/win-unpacked/' + encodeURIComponent(pkg.build.productName + '.exe'), import.meta.url) : new URL(name, folder);
+if (!unpacked && !zipDirectory) await copyFile(new URL('../release/' + name, import.meta.url), exe);
+const profileFolder = zipDirectory ? new URL('app/', folder) : folder;
+const profileExists = await stat(new URL('PAIRO-data/', profileFolder)).then(() => true, () => false);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms)), results = [];
 
 for (let run = 0; run < 2; run++) {
@@ -28,7 +39,10 @@ for (let run = 0; run < 2; run++) {
   });
   if (portBusy) throw new Error('Debug port 9226 is already in use; close the earlier measurement first.');
   const start = performance.now();
-  const child = spawn(fileURLToPath(exe), ['--remote-debugging-port=9226'], { windowsHide: true, stdio: 'ignore', env: { ...process.env, PORTABLE_EXECUTABLE_DIR: fileURLToPath(folder) } });
+  const taskEnv = { ...process.env };
+  if (zipDirectory) delete taskEnv.PORTABLE_EXECUTABLE_DIR;
+  else taskEnv.PORTABLE_EXECUTABLE_DIR = fileURLToPath(folder);
+  const child = spawn(fileURLToPath(exe), ['--remote-debugging-port=9226'], { windowsHide: true, stdio: 'ignore', env: taskEnv });
   let spawnError; child.once('error', error => { spawnError = error; });
   const exited = new Promise(resolve => child.once('exit', resolve));
   let socket;
@@ -66,7 +80,7 @@ for (let run = 0; run < 2; run++) {
       if (!ready) await pause(100);
     }
     if (!ready) throw new Error('PAIRO UI did not become ready.');
-    const result = { run: run + 1, profile: run === 0 && !profileExists ? 'new' : 'existing', uiReadySeconds: Number(((performance.now() - start) / 1000).toFixed(3)), includesPortableExtraction: !unpacked };
+    const result = { run: run + 1, profile: run === 0 && !profileExists ? 'new' : 'existing', uiReadySeconds: Number(((performance.now() - start) / 1000).toFixed(3)), includesPortableExtraction: !unpacked && !zipDirectory };
     results.push(result); console.log(JSON.stringify(result));
     await evaluate('(()=>{setTimeout(()=>window.close(),100);return true;})()');
     let exitTimer;
@@ -83,5 +97,6 @@ for (let run = 0; run < 2; run++) {
     }
   }
 }
-const report = { version: pkg.version, mode: unpacked ? 'unpacked' : 'portable', executableBytes: (await stat(exe)).size, runs: results, notes: 'The second run also benefits from OS cache. Isolated profile; no capture, pairing or AI requests.' };
+if (zipDirectory && !(await stat(new URL('PAIRO-data/', profileFolder))).isDirectory()) throw new Error('Directory portable preferences were not created beside its EXE');
+const report = { version: pkg.version, mode: zipDirectory ? 'zip-directory' : unpacked ? 'unpacked' : 'portable', executableBytes: (await stat(exe)).size, initialExtractSeconds, runs: results, notes: 'The second run also benefits from OS cache. Isolated profile; no capture, pairing or AI requests.' };
 await writeFile(new URL('startup.json', folder), JSON.stringify(report, null, 2));

@@ -10,6 +10,7 @@ import { ScreenshotTransfers, validScreenshotId } from './screenshot-transfer.js
 import { cropCanvas, screenshotPayload, decodeScreenshot } from './screenshot.js';
 import { selectScreenshotRegion } from './screenshot-region.js';
 import { connectionDiagnostics } from './diagnostics.js';
+import { RELEASES_URL, checkLatestRelease, updateMessage } from './updates.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -748,6 +749,22 @@ $('show-diagnostics').addEventListener('click', () => {
   $('diagnostics-text').value = JSON.stringify(connectionDiagnostics({ version: __APP_VERSION__, platform: Capacitor.getPlatform(),
     role: state.role, peer: state.peer, localStream: state.outgoingStream, remoteStream: $('remote-preview').srcObject, modelPending: state.modelPending }), null, 2);
   $('diagnostics-dialog').showModal();
+});
+$('app-version').textContent = '版本 ' + __APP_VERSION__;
+$('show-updates').addEventListener('click', () => $('updates-dialog').showModal());
+$('close-updates').addEventListener('click', () => $('updates-dialog').close());
+$('check-updates').addEventListener('click', async () => {
+  $('check-updates').disabled = true;
+  $('update-status').textContent = '正在读取 GitHub 正式版本…';
+  try { $('update-status').textContent = updateMessage(await checkLatestRelease(__APP_VERSION__)); }
+  finally { $('check-updates').disabled = false; }
+});
+$('open-releases').addEventListener('click', async () => {
+  try {
+    if (window.desktopBridge) await window.desktopBridge.openReleases();
+    else if (Capacitor.isNativePlatform()) location.href = RELEASES_URL;
+    else window.open(RELEASES_URL, '_blank', 'noopener,noreferrer');
+  } catch { $('update-status').textContent = '无法打开浏览器，请使用 README 中的版本下载链接。'; }
 });
 $('close-diagnostics').addEventListener('click', () => $('diagnostics-dialog').close());
 $('copy-diagnostics').addEventListener('click', async () => {

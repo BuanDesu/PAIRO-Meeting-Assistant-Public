@@ -9,6 +9,7 @@
 - 系统音频请求 Electron Windows loopback；麦克风由应用弹出每次会话权限确认。三组 Alt+Shift 快捷键通过 Electron globalShortcut 注册，可在窗口未聚焦时触发。[Electron 全局快捷键文档](https://www.electronjs.org/docs/latest/api/global-shortcut)
 - EXE 未做 Authenticode 签名，Windows SmartScreen 可能提示未知发布者。自解压包由本机 NSIS 3.12 生成；构建脚本自动探测 Program Files 下的 NSIS，非默认目录可通过 NSIS_HOME 指定。[electron-builder Windows 目标文档](https://www.electron.build/win)
 - 桌面运行包仅保留服务端所需的 `ws`；二维码与 Capacitor 等前端依赖由 Vite 编译进网页资源，不把其 Node 工具链一并携带。首次与重复启动的实测、重复测量命令见 [启动与体积记录](STARTUP_MEASUREMENTS.md)。
+- 同时生成 `win-x64-folder.zip`，包含同一目录运行包。用户完整解压后直接启动 EXE，避免单文件版每次重复解压；设置保存在解压目录中的 `PAIRO-data`。ZIP 打包拒绝包含已有的 `PAIRO-data`，避免误带用户配置。
 
 ## Android APK
 
@@ -28,5 +29,5 @@ Android 包使用 androidScheme=http 与 Capacitor cleartext 设置，让 HTTPS/
 ## GitHub Actions
 
 - workflow_dispatch：构建两个工件并保存为 GitHub Actions artifacts。
-- 推送符合 v* 的 tag：核对标签与项目版本，构建并创建 GitHub Release，附加便携 EXE、正式签名 APK 与 `SHA256SUMS.txt`。
+- 推送符合 v* 的 tag：核对标签与项目版本，构建并创建 GitHub Release，附加便携 EXE、Windows 目录 ZIP、正式签名 APK 与 `SHA256SUMS.txt`。
 - 正式签名密钥只由本地受限目录或 GitHub Actions Secrets 提供，源码不包含私钥或密码。首次配置需要维护者明确授权。

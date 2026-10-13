@@ -15,12 +15,13 @@
 发布文件名：
 
 - `Pairo-Meeting-Copilot-<版本>-win-x64.exe`
+- `Pairo-Meeting-Copilot-<版本>-win-x64-folder.zip`（解压一次后直接打开目录内 EXE）
 - `Pairo-Meeting-Copilot-<版本>-android.apk`
 - `SHA256SUMS.txt`
 
 手动运行此工作流会生成 Actions artifacts，供检查下载；手动运行本身不创建 Release。
 
-发布说明应包含下载入口、最低设备要求、README 使用指南和本次变更。发布前确认两个 Assets 均可下载，不把自动生成的源码 ZIP 当作安装包。
+发布说明应包含下载入口、最低设备要求、README 使用指南和本次变更。发布前确认 EXE、APK、目录 ZIP 都可下载并包含在校验文件中；目录 ZIP 是可运行的 Windows 程序，页面底部的 Source code ZIP 是源码。
 
 ## 上传已经构建的安装包
 

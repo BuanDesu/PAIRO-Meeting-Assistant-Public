@@ -23,6 +23,8 @@ app.whenReady().then(async () => {
   signaling = createSignalingServer({ allowedOrigins: '' });
   await new Promise(resolve => signaling.server.listen(0, '127.0.0.1', resolve));
   const signalBase = 'http://127.0.0.1:' + signaling.server.address().port;
+  let releasesOpened = 0;
+  ipcMain.handle('ui-smoke-open-releases', () => { releasesOpened++; });
   ipcMain.handle('ui-smoke-signal', () => ({ signalBase, lanAddresses: [
     { interface: 'Wi-Fi', ip: '192.168.1.20', url: 'http://192.168.1.20:8787' },
     { interface: 'VPN', ip: '10.0.0.1', url: 'http://10.0.0.1:8787' },
@@ -55,6 +57,22 @@ app.whenReady().then(async () => {
       while (!predicate()) { if (Date.now() > until) throw new Error('UI did not reach expected state'); await new Promise(r => setTimeout(r, 20)); }
     };
     await wait(() => el('desktop-lan-select').options.length === 2);
+    const originalFetch = window.fetch;
+    window.fetch = async (url, options) => {
+      if (!url.startsWith('https://api.github.com/')) return originalFetch(url, options);
+      if (options.credentials !== 'omit' || options.headers.Authorization) throw new Error('Update query includes credentials');
+      return new Response('', { status: 404 });
+    };
+    try {
+      el('show-updates').click();
+      if (!el('updates-dialog').open || !el('app-version').textContent.startsWith('版本 ')) throw new Error('Update dialog missing version');
+      el('check-updates').click();
+      await wait(() => !el('check-updates').disabled);
+      if (!el('update-status').textContent.includes('登录')) throw new Error('Private release query misreported as current');
+      el('open-releases').click();
+      el('close-updates').click();
+      if (el('updates-dialog').open) throw new Error('Update dialog cannot close');
+    } finally { window.fetch = originalFetch; }
     el('desktop-lan-select').value = 'http://10.0.0.1:8787';
     el('desktop-lan-select').dispatchEvent(new Event('change'));
     if (el('desktop-lan-addresses').textContent !== 'http://10.0.0.1:8787') throw new Error('Address selection is ignored');
@@ -75,6 +93,7 @@ app.whenReady().then(async () => {
     window.uiSmokeTrack = track;
     return {invalidPreferencesRecovered:true,addressSelection:true,qrRendered:true,roomCode:el('room-code').textContent};
   })()`);
+  if (releasesOpened !== 1) throw new Error('Desktop release link did not reach the native bridge');
   await fs.mkdir(path.join(root, 'release', 'ui-qa'), { recursive: true });
   await fs.writeFile(path.join(root, 'release', 'ui-qa', 'desktop.png'), await captureRendered());
   phone = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false } });

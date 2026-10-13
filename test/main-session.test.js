@@ -28,6 +28,7 @@ function fixture(overrides = {}) {
     getAudioTracks() { return this.tracks.filter(track => track.kind === 'audio'); }
   }
   const context = {
+    __APP_VERSION__: '0.2.0',
     document, Capacitor: { getPlatform: () => 'web' }, defaultRoleForPlatform: () => 'desktop',
     location: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5173' },
     window: { addEventListener() {} }, localStorage: { getItem: () => null, setItem() {} },
