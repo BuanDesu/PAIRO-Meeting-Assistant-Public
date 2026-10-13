@@ -1,5 +1,15 @@
 export const PAIRING_VERSION = 1;
 
+export function scanFailureMessage(error) {
+  const message = String(error?.message || '');
+  if (/camera|permission|access wasn't provided|相机|权限/i.test(message)) {
+    return '相机权限未开启。请在手机设置 → 应用 → PAIRO → 权限中允许相机，再返回重试；也可以手动填写地址与房间码。';
+  }
+  if (/cancel|取消/i.test(message)) return '扫码已取消，也可以手动填写地址与房间码。';
+  if (/二维码|配对|版本|房间码|地址|设备时间/.test(message)) return message + '。可重试扫码，或手动填写地址与房间码。';
+  return '无法完成扫码，请重新打开扫码；也可以手动填写地址与房间码。';
+}
+
 function validatePairing(value, now) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.type !== 'pairo-pairing') throw new Error('这不是 PAIRO 配对二维码');
   if (value.version !== PAIRING_VERSION) throw new Error('配对版本不兼容，请同时更新电脑和手机程序');

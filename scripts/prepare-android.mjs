@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { verifyReleaseVersion } from './release-version.mjs';
 
@@ -13,6 +13,10 @@ const result = spawnSync(command, args, { cwd: root, stdio: 'inherit', shell: wi
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;
 if (process.exitCode === 0) {
+  const nativeDir = resolve(androidDir, 'app', 'src', 'main', 'java', 'com', 'pairo', 'meetingcopilot');
+  for (const file of ['MainActivity.java', 'ModelStreamPlugin.java']) {
+    copyFileSync(resolve(root, 'native', 'android', file), resolve(nativeDir, file));
+  }
   const version = verifyReleaseVersion(
     JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
     JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')),

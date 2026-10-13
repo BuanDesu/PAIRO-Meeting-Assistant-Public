@@ -7,7 +7,7 @@ dist/
 Thumbs.db
 *.log
 release/
-android/
+/android/
 .local-signing/
 *.keystore
 *.jks

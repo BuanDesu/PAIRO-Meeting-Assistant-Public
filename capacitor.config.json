@@ -2,6 +2,7 @@
   "appId": "com.pairo.meetingcopilot",
   "appName": "Pairo Meeting Copilot",
   "webDir": "dist",
+  "loggingBehavior": "none",
   "server": {
     "androidScheme": "http",
     "cleartext": true

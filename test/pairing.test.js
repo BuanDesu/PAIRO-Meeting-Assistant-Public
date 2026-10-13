@@ -1,7 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPairingCode, parsePairingCode, checkSignaling } from '../src/pairing.js';
+import { createPairingCode, parsePairingCode, checkSignaling, scanFailureMessage } from '../src/pairing.js';
 import network from '../electron/network.cjs';
+
+test('camera denial explains restoring permissions in phone settings in Chinese', () => {
+  const actualNativeMessage = "Couldn't scan because camera access wasn't provided. Check your camera permissions and try again.";
+  const message = scanFailureMessage(new Error(actualNativeMessage));
+  assert.match(message, /手机设置.*PAIRO.*允许相机/);
+  assert.ok(!message.includes("Couldn't scan"));
+  assert.match(scanFailureMessage(new Error('Scan cancelled')), /扫码已取消/);
+});
 
 test('QR pairing roundtrip validates identity, expiration, protocol and reachable address', () => {
   const now = 1000000;

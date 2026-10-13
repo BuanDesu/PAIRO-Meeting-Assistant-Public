@@ -14,7 +14,7 @@ function fixture(overrides = {}) {
     previousElementSibling: { classList: { toggle() {} } },
     addEventListener(name, handler) { this.listeners[name] = handler; },
     setAttribute() {}, removeAttribute() {}, focus() {},
-    append(child) { this.children.push(child); }, remove() { this.removed = true; },
+    append(...children) { this.children.push(...children); }, remove() { this.removed = true; },
     querySelectorAll() { return this.children; },
   });
   const document = {
@@ -171,4 +171,24 @@ test('changing AI configuration invalidates a pending connection test', async ()
   assert.equal(captured.signal.aborted, true);
   finish('late success'); await testing;
   assert.match(fx.document.getElementById('model-test-status').textContent, /配置已更改/);
+});
+
+test('partial answers show before completion but cancellation rejects late updates and forwarding', async () => {
+  let finish, onPartial;
+  const sent = [];
+  const fx = fixture({ askModel: args => { onPartial = args.onPartial; return new Promise(resolve => { finish = resolve; }); } });
+  fx.state.peer = { send: async message => sent.push(message) };
+  const request = fx.submitQuestion('流式问题'); await tick();
+  onPartial('正在逐步回答');
+  const pending = [...fx.state.modelNodes][0];
+  const body = pending.children.at(-1);
+  assert.equal(body.textContent, '正在逐步回答');
+  assert.equal(fx.state.chatHistory.length, 0);
+  assert.equal(sent.length, 0);
+  fx.document.getElementById('cancel-model').listeners.click();
+  onPartial('不应显示的迟到内容'); finish('不应提交的答案'); await request;
+  assert.equal(body.textContent, '正在逐步回答');
+  assert.equal(pending.removed, true);
+  assert.equal(fx.state.lastAnswer, '');
+  assert.equal(sent.length, 0);
 });

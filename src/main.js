@@ -4,7 +4,7 @@ import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { PeerSession } from './peer-session.js';
 import { askModel } from './llm.js';
 import { defaultRoleForPlatform } from './platform.js';
-import { createPairingCode, parsePairingCode, checkSignaling } from './pairing.js';
+import { createPairingCode, parsePairingCode, checkSignaling, scanFailureMessage } from './pairing.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -227,8 +227,7 @@ async function scanPairing() {
     $('pairing-hint').textContent = '已填入配对信息，请核对电脑地址后点击“连接”。';
   } catch (error) {
     if (state.role !== 'mobile' || generation !== state.captureGeneration) return;
-    const cancelled = /cancel|取消/i.test(error.message || '');
-    $('pairing-hint').textContent = cancelled ? '扫码已取消，也可以手动填写地址与房间码。' : (error.message || '扫码失败') + '。可重试扫码，或手动填写地址与房间码。';
+    $('pairing-hint').textContent = scanFailureMessage(error);
   } finally { $('scan-pairing').disabled = false; }
 }
 
@@ -495,8 +494,23 @@ async function submitQuestion(question, image = state.latestImage) {
   const request = state.modelQueue.catch(() => {}).then(async () => {
     if (!current()) return;
     pending.textContent = '正在请求模型…';
+    const answerBody = document.createElement('div');
+    let partialShown = false;
     try {
-      const answer = await askModel({ endpoint, apiKey: key, model, question: actualQuestion, imageDataUrl: image, history: state.chatHistory, signal: controller.signal });
+      const answer = await askModel({ endpoint, apiKey: key, model, question: actualQuestion, imageDataUrl: image, history: state.chatHistory, signal: controller.signal,
+        onPartial: text => {
+          if (!current() || controller.signal.aborted) return;
+          if (!partialShown) {
+            partialShown = true;
+            pending.textContent = '';
+            pending.className = 'chat-message answer';
+            const label = document.createElement('div'); label.className = 'message-label'; label.textContent = 'PAIRO AI · 回答中';
+            pending.append(label, answerBody);
+          }
+          answerBody.textContent = text;
+          $('message-list').scrollTop = $('message-list').scrollHeight;
+        },
+      });
       if (!current()) return;
       pending.remove();
       addChatMessage('answer', answer);

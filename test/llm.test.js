@@ -90,3 +90,20 @@ test('reports timeout when the provider stalls after response headers', async t 
   });
   await assert.rejects(askModel({ endpoint: 'https://llm.example', apiKey: 'test', model: 'm', timeoutMs: 10 }), /超时/);
 });
+
+test('model requests enable streaming and progressively report text without resending JSON-only replies', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const seen = []; let calls = 0;
+  globalThis.fetch = async (_url, options) => {
+    calls++;
+    assert.equal(JSON.parse(options.body).stream, true);
+    return new Response('data: {"choices":[{"delta":{"content":"先显示"}}]}\n\ndata: {"choices":[{"delta":{"content":"，再完成"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const params = { endpoint: 'https://llm.example', apiKey: 'test', model: 'm', onPartial: text => seen.push(text) };
+  assert.equal(await askModel(params), '先显示，再完成');
+  assert.deepEqual(seen, ['先显示', '先显示，再完成']);
+  globalThis.fetch = async () => { calls++; return Response.json({ choices: [{ message: { content: '一次完整回答' } }] }); };
+  assert.equal(await askModel(params), '一次完整回答');
+  assert.equal(calls, 2);
+});
