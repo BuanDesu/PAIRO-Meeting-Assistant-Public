@@ -7,6 +7,28 @@ import security from '../electron/security.cjs';
 import preferences from '../electron/preferences.cjs';
 import vm from 'node:vm';
 
+test('release-page IPC accepts only the app main frame and always uses a fixed HTTPS destination', async () => {
+  const source = await readFile(new URL('../electron/main.cjs', import.meta.url), 'utf8');
+  const handlers = new Map(), opened = [];
+  const frame = { url: 'http://127.0.0.1:5000/' };
+  const contents = { mainFrame: frame, getURL: () => frame.url };
+  const context = {
+    mainWindow: { isDestroyed: () => false, webContents: contents },
+    uiOrigin: () => 'http://127.0.0.1:5000', isTrustedUiUrl: security.isTrustedUiUrl,
+    ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
+    shell: { openExternal: url => { opened.push(url); } },
+  };
+  vm.runInNewContext(source.slice(source.indexOf('function trustedContents'), source.indexOf('const hasSingleInstanceLock')) + source.slice(source.indexOf("ipcMain.handle('desktop:signal-info'"), source.indexOf('app.whenReady()')), context);
+  const open = handlers.get('desktop:open-releases');
+  open({ sender: contents, senderFrame: frame }, 'https://untrusted.example/');
+  assert.deepEqual(opened, ['https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest']);
+  assert.throws(() => open({ sender: contents, senderFrame: { url: frame.url } }), /Untrusted/);
+  assert.throws(() => open({ sender: {}, senderFrame: frame }), /Untrusted/);
+  frame.url = 'https://untrusted.example/';
+  assert.throws(() => open({ sender: contents, senderFrame: frame }), /Untrusted/);
+  assert.equal(opened.length, 1);
+});
+
 test('allows legacy and modern display permission while separating microphone and camera', () => {
   assert.equal(security.mediaPermissionKind('media', { mediaTypes: [] }), 'display');
   assert.equal(security.mediaPermissionKind('display-capture', { mediaTypes: ['video'] }), 'display');

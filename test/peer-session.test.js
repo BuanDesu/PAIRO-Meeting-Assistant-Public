@@ -55,3 +55,25 @@ test('concurrent initialization shares one connection and peer departure invalid
   assert.equal(await first, await second);
   assert.equal(created(), 1);
 });
+
+test('capture replacement uses existing senders and rolls back a failed audio replacement without reopening the room', async t => {
+  const { peer } = peerFixture(t);
+  const oldVideo = { kind: 'video' }, oldAudio = { kind: 'audio' }, newVideo = { kind: 'video' }, newAudio = { kind: 'audio' };
+  const stream = tracks => ({ getTracks: () => tracks });
+  const changes = [];
+  const video = { track: oldVideo, async replaceTrack(track) { changes.push(track); this.track = track; } };
+  let failAudio = true;
+  const audio = { track: oldAudio, async replaceTrack(track) { if (failAudio) throw new Error('audio failed'); this.track = track; } };
+  peer.pc = { getSenders: () => [video, audio], close() {} };
+  peer.localStream = stream([oldVideo, oldAudio]); const previous = peer.localStream;
+  peer.room = 'EXISTING'; const pc = peer.pc;
+  await assert.rejects(peer.replaceLocalStream(stream([newVideo, newAudio])), /audio failed/);
+  assert.equal(video.track, oldVideo); assert.equal(peer.localStream, previous);
+  assert.deepEqual(changes, [newVideo, oldVideo]);
+  failAudio = false;
+  const next = stream([newVideo, newAudio]); await peer.replaceLocalStream(next);
+  assert.equal(peer.localStream, next); assert.equal(video.track, newVideo); assert.equal(audio.track, newAudio);
+  assert.equal(peer.pc, pc); assert.equal(peer.room, 'EXISTING');
+  await assert.rejects(peer.replaceLocalStream(stream([newVideo])), /轨道已变化/);
+  assert.equal(peer.localStream, next);
+});

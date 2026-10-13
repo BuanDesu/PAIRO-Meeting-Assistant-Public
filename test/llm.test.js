@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { askModel, requestModel } from '../src/llm.js';
+import { askModel, requestModel, modelHttpError } from '../src/llm.js';
+
+test('provider errors give actionable guidance and hide the key even if echoed by the provider', () => {
+  const key = 'private-test-key';
+  const message = modelHttpError(401, 'Unauthorized: ' + key, key);
+  assert.match(message, /Key 无效/);
+  assert.ok(!message.includes(key));
+  assert.match(modelHttpError(404, ''), /地址或模型名称/);
+  assert.match(modelHttpError(429, ''), /额度/);
+  assert.match(modelHttpError(503, ''), /暂时不可用/);
+});
 
 test('sends text and screenshot to the configured compatible API', async t => {
   const original = globalThis.fetch;
@@ -79,4 +89,21 @@ test('reports timeout when the provider stalls after response headers', async t 
     json: () => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason))),
   });
   await assert.rejects(askModel({ endpoint: 'https://llm.example', apiKey: 'test', model: 'm', timeoutMs: 10 }), /超时/);
+});
+
+test('model requests enable streaming and progressively report text without resending JSON-only replies', async t => {
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  const seen = []; let calls = 0;
+  globalThis.fetch = async (_url, options) => {
+    calls++;
+    assert.equal(JSON.parse(options.body).stream, true);
+    return new Response('data: {"choices":[{"delta":{"content":"先显示"}}]}\n\ndata: {"choices":[{"delta":{"content":"，再完成"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+  };
+  const params = { endpoint: 'https://llm.example', apiKey: 'test', model: 'm', onPartial: text => seen.push(text) };
+  assert.equal(await askModel(params), '先显示，再完成');
+  assert.deepEqual(seen, ['先显示', '先显示，再完成']);
+  globalThis.fetch = async () => { calls++; return Response.json({ choices: [{ message: { content: '一次完整回答' } }] }); };
+  assert.equal(await askModel(params), '一次完整回答');
+  assert.equal(calls, 2);
 });

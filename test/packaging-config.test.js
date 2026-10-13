@@ -15,7 +15,10 @@ test('defines portable Windows and Capacitor Android outputs', async () => {
   const pkg = JSON.parse(pkgText);
   const capacitor = JSON.parse(capacitorText);
   assert.equal(pkg.main, 'electron/main.cjs');
-  assert.equal(pkg.build.win.signAndEditExecutable, false);
+  assert.equal(pkg.build.win.signExecutable, false);
+  assert.notEqual(pkg.build.win.signAndEditExecutable, false);
+  assert.ok(pkg.build.files.includes('src/protocol.js'));
+  assert.ok(pkg.build.files.includes('!node_modules/@capacitor/**/*'));
   assert.match(pkg.scripts['desktop:portable'], /build-desktop/);
   const options = desktopBuildOptions(pkg, 'verified-electron.zip', '/project');
   assert.equal(options.projectDir, '/project');

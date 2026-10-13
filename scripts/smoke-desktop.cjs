@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const { isTrustedUiUrl, mediaPermissionKind } = require('../electron/security.cjs');
 let win, ui, signaling;
-const timeout = setTimeout(() => { console.error('Desktop smoke timed out'); app.exit(1); }, 25000);
+const timeout = setTimeout(() => { console.error('Desktop smoke timed out'); app.exit(1); }, 45000);
 app.disableHardwareAcceleration();
 // Deterministic same-machine test: avoid dependence on multicast DNS resolution.
 // The production application retains Chromium's normal candidate privacy behavior.
@@ -17,7 +17,7 @@ app.commandLine.appendSwitch('allow-loopback-in-peer-connection');
 app.whenReady().then(async () => {
   ui = createServer(async (request, response) => {
     if (request.url === '/') { response.setHeader('Content-Type', 'text/html'); response.end('<html><body>PAIRO smoke</body></html>'); return; }
-    if (!['/src/peer-session.js', '/src/data-channel.js'].includes(request.url)) { response.writeHead(404).end(); return; }
+    if (!['/src/peer-session.js', '/src/data-channel.js', '/src/protocol.js'].includes(request.url)) { response.writeHead(404).end(); return; }
     response.setHeader('Content-Type', 'text/javascript');
     response.end(await fs.readFile(path.join(root, request.url.slice(1))));
   });
@@ -83,7 +83,7 @@ app.whenReady().then(async () => {
   const result = await win.webContents.executeJavaScript(`(async () => {
     const { PeerSession } = await import('/src/peer-session.js');
     const received = [], statuses = [];
-    const desktop = new PeerSession({role:'desktop',onStatus:value=>statuses.push(value)});
+    const desktop = new PeerSession({role:'desktop',onStatus:value=>statuses.push(value),onApproval:()=>desktop.approvePeer(true)});
     const phone = new PeerSession({role:'mobile',onMessage:value=>received.push(value),onStatus:value=>statuses.push(value)});
     const wait = async predicate => {
       const until=Date.now()+12000;
@@ -107,9 +107,21 @@ app.whenReady().then(async () => {
       await wait(()=>received.length===1);
       if(received[0].image!==image) throw new Error('Screenshot content mismatch');
       const maximum=desktop.pc.sctp.maxMessageSize;
+      const oldPc=desktop.pc;
+      desktop.scheduleMediaRecovery(0);
+      await wait(()=>desktop.pc!==oldPc&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open');
+      await desktop.send({type:'text',text:'after media recovery'});
+      await wait(()=>received.length===2);
+      if(received[1].text!=='after media recovery') throw new Error('Media recovery lost the data channel');
+      const oldSocket=phone.signal;
+      oldSocket.close();
+      await wait(()=>phone.signal!==oldSocket&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open');
+      await desktop.send({type:'text',text:'after signaling reconnect'});
+      await wait(()=>received.length===3);
+      if(received[2].text!=='after signaling reconnect') throw new Error('Signaling recovery lost the data channel');
       desktop.disconnect();
       await wait(()=>phone.pc===null);
-      return {negotiatedMaxMessageSize:maximum,screenshotBytes:image.length,peerDepartureCleaned:true};
+      return {negotiatedMaxMessageSize:maximum,screenshotBytes:image.length,mediaRecovery:true,signalingReconnect:true,peerDepartureCleaned:true};
     } finally {desktop.disconnect();phone.disconnect();}
   })()`, true);
   console.log(JSON.stringify({ electron: process.versions.electron, displayPermissionReachedPicker: true, ...result }));

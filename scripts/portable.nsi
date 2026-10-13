@@ -10,6 +10,11 @@ RequestExecutionLevel user
 SilentInstall silent
 AutoCloseWindow true
 SetCompressor lzma
+VIProductVersion "${APP_VERSION}.0"
+VIAddVersionKey /LANG=1033 "ProductName" "${APP_NAME}"
+VIAddVersionKey /LANG=1033 "FileDescription" "${APP_NAME} portable application"
+VIAddVersionKey /LANG=1033 "ProductVersion" "${APP_VERSION}"
+VIAddVersionKey /LANG=1033 "FileVersion" "${APP_VERSION}.0"
 !include "FileFunc.nsh"
 Var AppTempDir
 Var ForwardArgs

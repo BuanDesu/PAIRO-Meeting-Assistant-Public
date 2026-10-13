@@ -4,11 +4,13 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createServer } = require('node:http');
-const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell } = require('electron');
 const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
 const { createPreferencesStore } = require('./preferences.cjs');
+const { lanAddresses } = require('./network.cjs');
+const { showCapturePicker } = require('./capture-picker.cjs');
 
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || (app.isPackaged ? path.dirname(app.getPath('exe')) : '');
 if (portableDir) {
   const userData = path.join(portableDir, 'PAIRO-data');
   try {
@@ -51,14 +53,7 @@ const MIME = {
 };
 
 function getLanAddresses() {
-  const addresses = [];
-  for (const [name, records] of Object.entries(os.networkInterfaces())) {
-    for (const record of records || []) {
-      if (record.family !== 'IPv4' || record.internal || record.address.startsWith('169.254.')) continue;
-      addresses.push({ interface: name, ip: record.address, url: 'http://' + record.address + ':' + signalingPort });
-    }
-  }
-  return addresses;
+  return lanAddresses(os.networkInterfaces(), signalingPort);
 }
 
 function listen(server, port, host) {
@@ -161,23 +156,14 @@ function configureDisplayCapture() {
     try {
       const sources = await desktopCapturer.getSources({
         types: ['screen', 'window'],
-        thumbnailSize: { width: 180, height: 110 },
+        thumbnailSize: { width: 360, height: 220 },
       });
       if (!sources.length) {
         respond({});
         return;
       }
-      const buttons = sources.map(source => source.name).concat(['取消']);
-      const options = {
-        type: 'question',
-        title: '选择要分享的屏幕或窗口',
-        message: '请选择本次要发送到已配对手机的内容。',
-        buttons,
-        cancelId: buttons.length - 1,
-        defaultId: 0,
-      };
-      const answer = mainWindow ? await dialog.showMessageBox(mainWindow, options) : await dialog.showMessageBox(options);
-      const source = trustedContents(mainWindow?.webContents) && answer.response < sources.length ? sources[answer.response] : null;
+      const selection = await showCapturePicker({ parent: mainWindow, sources, BrowserWindow, ipcMain });
+      const source = trustedContents(mainWindow?.webContents) ? selection : null;
       if (!source) {
         respond({});
         return;
@@ -247,6 +233,10 @@ ipcMain.handle('desktop:preferences-read', event => {
 ipcMain.handle('desktop:preferences-write', (event, value) => {
   requireTrustedIpc(event);
   return preferencesStore.write(value);
+});
+ipcMain.handle('desktop:open-releases', event => {
+  requireTrustedIpc(event);
+  return shell.openExternal('https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest');
 });
 
 app.whenReady().then(async () => {

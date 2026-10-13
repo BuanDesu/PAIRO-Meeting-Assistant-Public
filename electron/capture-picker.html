@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src data:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>选择共享内容</title><link rel="stylesheet" href="capture-picker.css" />
+</head>
+<body>
+  <header><h1>选择要分享的屏幕或窗口</h1><p>预览仅在这台电脑上显示。选择后，在电脑允许手机加入时开始向手机传送；分享整个屏幕会包含其中的通知与其他窗口。</p></header>
+  <main id="sources" aria-label="可共享的画面"></main>
+  <footer><span id="status" role="status">正在加载预览…</span><button id="cancel" type="button">取消分享</button></footer>
+  <script src="capture-picker.js"></script>
+</body>
+</html>
