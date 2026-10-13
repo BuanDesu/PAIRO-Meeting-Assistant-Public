@@ -732,6 +732,7 @@ $('test-model').addEventListener('click', async () => {
   }
 });
 for (const id of ['llm-endpoint', 'llm-model', 'llm-key']) $(id).addEventListener('input', () => {
+  if (id !== 'llm-key') savePreferences();
   state.configGeneration += 1;
   state.configController?.abort();
   state.configController = null;
@@ -761,12 +762,14 @@ $('speak-answer').addEventListener('click', () => {
   speechSynthesis.speak(utterance);
 });
 for (const id of ['mobile-signal', 'llm-endpoint', 'llm-model']) $(id).addEventListener('change', savePreferences);
+$('mobile-signal').addEventListener('input', savePreferences);
 $('mobile-signal').value = saved.signalBase || defaultBase;
 $('desktop-signal').value = saved.signalBase || defaultBase;
 $('llm-endpoint').value = saved.endpoint || 'https://api.openai.com/v1/chat/completions';
 $('llm-model').value = saved.model || 'gpt-4o-mini';
 void loadDesktopSignalInfo();
 $('desktop-signal').addEventListener('change', () => { savePreferences(); void refreshPairingQr(); });
+$('desktop-signal').addEventListener('input', savePreferences);
 
 function handleDesktopKeydown(event) {
   if (state.role !== 'desktop' || event.repeat || !event.altKey || !event.shiftKey) return;

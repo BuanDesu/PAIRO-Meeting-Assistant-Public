@@ -207,6 +207,19 @@ test('changing AI configuration invalidates a pending connection test', async ()
   assert.match(fx.document.getElementById('model-test-status').textContent, /配置已更改/);
 });
 
+test('non-secret preferences persist on input before blur while API Key editing never writes a secret', () => {
+  const writes = [];
+  const fx = fixture({ localStorage: { getItem: () => null, setItem: (_key, value) => writes.push(JSON.parse(value)) } });
+  fx.state.role = 'mobile';
+  for (const [id, value] of [['mobile-signal', 'http://192.168.1.7:8787'], ['llm-endpoint', 'https://model.example/v1/chat/completions'], ['llm-model', 'vision-model']]) {
+    fx.document.getElementById(id).value = value; fx.document.getElementById(id).listeners.input();
+  }
+  assert.deepEqual(writes.at(-1), { signalBase: 'http://192.168.1.7:8787', endpoint: 'https://model.example/v1/chat/completions', model: 'vision-model' });
+  const count = writes.length;
+  fx.document.getElementById('llm-key').value = 'must-never-persist'; fx.document.getElementById('llm-key').listeners.input();
+  assert.equal(writes.length, count); assert.ok(!JSON.stringify(writes).includes('must-never-persist'));
+});
+
 test('partial answers show before completion but cancellation rejects late updates and forwarding', async () => {
   let finish, onPartial;
   const sent = [];
