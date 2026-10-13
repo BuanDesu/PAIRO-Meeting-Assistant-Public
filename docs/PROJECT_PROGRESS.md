@@ -21,6 +21,8 @@
 
 2026-10-14 最终正式 APK 覆盖安装 Success，冷启动后 API 地址与模型保留、Key 为空；实际手机“版本与更新”显示 0.2.0，查询私有仓库返回中文登录指导，弹窗正常关闭。PR #2 已获用户明确授权并合并到 main，版本发布继续由标签工作流生成安装包。
 
+2026-10-14，[v0.2.0 已发布](https://github.com/BuanDesu/p2p-meeting-copilot/releases/tag/v0.2.0)，latest 已指向该正式版本。标签源提交 6eddb59；发布工作流的 Windows、Android 和 Release 作业均成功，EXE / ZIP / APK 与 SHA256SUMS.txt 四份附件已上传。校验文件的三份摘要与 GitHub 服务器附件摘要一致。官方 APK 已完整下载并核对 SHA-256、固定证书、v2 签名、0.2.0 / 2001 / min API 26、非调试属性；手机再次覆盖安装 Success，启动正常、地址和模型保留、Key 为空。已发布附件不替换。
+
 未完成范围保持明确：切换到另一网络/地址变化及多种活动网卡组合缺完整真机记录；维护者暂无 Windows 代码签名证书。当前结果不作为跨公网连接、复杂会议负载或所有 Android 设备的保证。
 
 完整的优先级与结果分别见 [TODO](TODO.md) 和 [实际设备验收](DEVICE_VALIDATION.md)。公网 HTTPS/TURN 部署按实际需求另行配置，当前主要面向同一可信局域网使用。
