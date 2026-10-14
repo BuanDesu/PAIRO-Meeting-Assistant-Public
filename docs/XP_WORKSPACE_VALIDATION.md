@@ -10,7 +10,7 @@
 | 手机布局 | 390 × 781 CSS 像素的可用区；消息区 437 px，输入栏 42 px，底部导航可见 |
 | 截图自动提问 | 手机关闭普通自动回答仍携带匹配图片与指定问题请求模型；接收确认先于提交 |
 | 静默桌面 | 回答只在手机，桌面无 toast，无新增 show/focus，WebContents 静音；关闭窗口后保持后台连接 |
-| 全局快捷键 | 在实际 Windows 进程注册五项绑定；预占 Num2 时更新失败、恢复旧配置；结束后释放 |
+| 全局快捷键 | 配置持久化写入检查通过，在实际 Windows 进程注册五项绑定；预占 Num2 时更新失败、恢复旧配置；结束后释放 |
 | 文本／滚动 | 原生预加载 IPC 和快捷键回调：Num3 切已有输入栏，文字自动提问，↑/↓ 各滚动约 65% 阅读区 |
 | 混合离线音频 | 生产 AudioWorklet 分别接入两条生成音轨，真实 CLI 转写后经数据通道到模拟手机，自动提问 |
 | 中文／英文 | 本机生成 WAV，不播放；英文正确识别完整句子，中文识别“請介紹本次會議的目標並說明下一步安排”，各约 1.1 秒推理 |
@@ -19,7 +19,7 @@
 | Android 构建 | 固定正式签名、v2 校验通过，0.3.0 / 3001，min API 26；MainActivity 编译通过竖屏设置 |
 | Windows 构建 | EXE / ZIP 完成；包内含快捷键共享模块和离线后端；目录成品两次隔离启动约 0.397 / 0.292 秒，桥接正常 |
 
-单元测试共 89 项：全量运行发现一条依赖旧函数名的测试片段截取失效，修正后相关检查定向复测通过。后续 CI 执行全量检查。生产 UI 短验收无控制台错误。原生短验收预期出现“Num2 被占用”的主进程异常，用于验证回滚，结果文件记录各项通过。
+单元测试共 89 项，提交 79fa941 的 Windows/Linux CI 全量与网页构建通过，Android 从零构建检查通过。最后补齐独立窗口选择器的 XP 样式，6 项选择器／权限边界定向检查通过，并更新电脑候选包；APK 不变。生产 UI 短验收无控制台错误。原生短验收预期出现“Num2 被占用”的主进程异常，用于验证回滚，结果文件记录各项通过。
 
 所有测试音频、画面、问题和 Key 均为隔离验收样例，AI 返回由模拟手机页面拦截；不采集实际用户桌面或麦克风，不调用真实 AI 服务。本机真实设备与隐藏模拟窗口结果严格分开。
 
@@ -29,8 +29,8 @@
 
 ```text
 APK  3e13e60a30b2a255c25f767965c744f20f5df3da9771bc9e3079fcf682a1af00
-ZIP  f4102ef87bd97f5dd1574f0b75f2bbbbfb66a718e75ab61c67bd31c7c75caed0
-EXE  3ece6dd4892e10ab2d5a9eb7a20afc81088e9e4147c468cd8ead0214a5c8496b
+ZIP  2260aaed5bba6ff35bc2d1083fa8d44d1c245ab66f6d570b45da6f6bd7721ded
+EXE  6a6fe553396d6ecee75f99ab7288d8dd4c02914dd1b38fe3b59cdb1a640ddbdc
 ```
 
 Android 证书 SHA-256 延续 `b9ccb30df1c5cfec3e0f2eb6baffe57fe01ee13d045dfea8612c66b328eed400`。
@@ -42,3 +42,5 @@ Android 证书 SHA-256 延续 `b9ccb30df1c5cfec3e0f2eb6baffe57fe01ee13d045dfea86
 - 旧清单中的另一网络／多活动网卡、Windows 证书保持未完成。最新正式发布仍是 v0.2.0，候选不会覆盖旧附件。
 
 离线组件来源：固定 [whisper.cpp v1.8.3](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.8.3) 的 CPU ZIP（SHA-256 来自官方附件摘要），[ggerganov/whisper.cpp 模型仓库](https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1) 的 tiny 多语言模型（固定修订与 LFS SHA-256）；与应用一同记录固定下载来源，不使用浮动最新版。
+
+独立 [XP 窗口选择器预览](screenshots/xp-capture-picker.png) 使用生成的应用画面，不含用户实际窗口缩略图。快捷键占用和组件下载错误在界面中显示中文原因，预加载层去除 Electron 内部方法名前缀。

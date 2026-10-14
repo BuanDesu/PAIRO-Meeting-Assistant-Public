@@ -1,4 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const invoke = async (channel, ...args) => {
+  try { return await ipcRenderer.invoke(channel, ...args); }
+  catch (error) { throw new Error(String(error.message || '操作未完成').replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '')); }
+};
 
 contextBridge.exposeInMainWorld('desktopBridge', Object.freeze({
   getSignalInfo: () => ipcRenderer.invoke('desktop:signal-info'),
@@ -7,10 +11,10 @@ contextBridge.exposeInMainWorld('desktopBridge', Object.freeze({
   openReleases: () => ipcRenderer.invoke('desktop:open-releases'),
   hideToTray: () => ipcRenderer.invoke('desktop:hide-to-tray'),
   getShortcuts: () => ipcRenderer.invoke('desktop:shortcuts-read'),
-  configureShortcuts: value => ipcRenderer.invoke('desktop:shortcuts-write', value),
+  configureShortcuts: value => invoke('desktop:shortcuts-write', value),
   speechStatus: () => ipcRenderer.invoke('desktop:speech-status'),
-  installSpeech: () => ipcRenderer.invoke('desktop:speech-install'),
-  transcribeAudio: pcm => ipcRenderer.invoke('desktop:speech-transcribe', pcm),
+  installSpeech: () => invoke('desktop:speech-install'),
+  transcribeAudio: pcm => invoke('desktop:speech-transcribe', pcm),
   cancelTranscription: () => ipcRenderer.invoke('desktop:speech-cancel'),
   onShortcutError: callback => {
     if (typeof callback !== 'function') return () => {};
