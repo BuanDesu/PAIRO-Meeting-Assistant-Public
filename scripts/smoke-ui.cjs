@@ -176,7 +176,7 @@ app.whenReady().then(async () => {
     const el=id=>document.getElementById(id);el('llm-key').value='qa-private-api-key';
     const endpoint=el('llm-endpoint').value;el('llm-endpoint').value='https://qa-private-endpoint.example';
     el('show-diagnostics').click();const text=el('diagnostics-text').value,report=JSON.parse(text);
-    if(text.includes('qa-private')||text.includes(el('room-code').textContent)||report.localMedia.video!==1||report.phase!=='connected'||report.version!=='0.2.0')throw new Error('Diagnostics content is wrong or leaks context');
+    if(text.includes('qa-private')||text.includes(el('room-code').textContent)||report.localMedia.video!==1||report.phase!=='connected'||report.version!=='${require('../package.json').version}')throw new Error('Diagnostics content is wrong or leaks context');
     el('llm-key').value='';el('llm-endpoint').value=endpoint;el('close-diagnostics').click();
     return {diagnosticsRedacted:true,versionEmbedded:true};
   })()`);

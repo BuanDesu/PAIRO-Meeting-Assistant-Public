@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
+import { DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent } from '../src/shortcuts.js';
+import { OfflineVoiceInput } from '../src/voice-input.js';
 
 const source = (await readFile(new URL('../src/main.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -28,6 +30,7 @@ function fixture(overrides = {}) {
     getAudioTracks() { return this.tracks.filter(track => track.kind === 'audio'); }
   }
   const context = {
+    DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent, OfflineVoiceInput,
     __APP_VERSION__: '0.2.0',
     document, Capacitor: { getPlatform: () => 'web' }, defaultRoleForPlatform: () => 'desktop',
     location: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5173' },
@@ -37,7 +40,7 @@ function fixture(overrides = {}) {
     ...overrides,
   };
   vm.createContext(context);
-  vm.runInContext(source + '\nthis.review={state,submitQuestion,startDesktop,changeDesktopCapture,setRole,attachRemoteStream,handleMobileMessage};', context);
+  vm.runInContext(source + '\nthis.review={state,submitQuestion,startDesktop,changeDesktopCapture,setRole,attachRemoteStream,handleMobileMessage,handleDesktopMessage,navigatePage,dispatchDesktopHotkey};', context);
   document.getElementById('llm-key').value = 'temporary-test-key';
   return { ...context.review, document, Stream };
 }
@@ -138,12 +141,12 @@ test('native picker cancellation gives Chinese guidance without creating capture
   assert.equal(fx.state.displayStream, null); assert.equal(fx.state.peer, null);
   assert.equal(fx.document.getElementById('start-share').disabled, false);
   assert.match(fx.document.getElementById('desktop-status').textContent, /分享未开始/);
-  assert.ok(!fx.document.getElementById('toast').textContent.includes('Invalid'));
+  assert.ok(!fx.document.getElementById('desktop-activity').textContent.includes('Invalid'));
   const previous = { kind: 'video', stop() { this.stopped = true; } };
   fx.state.displayStream = new fx.Stream([previous]); fx.state.peer = {};
   await fx.changeDesktopCapture();
   assert.equal(previous.stopped, undefined);
-  assert.match(fx.document.getElementById('toast').textContent, /继续分享原来的画面/);
+  assert.match(fx.document.getElementById('desktop-activity').textContent, /继续分享原来的画面/);
 });
 
 test('changing capture retains the paired room, microphone and conversation; cancellation keeps the original source', async () => {
@@ -272,4 +275,45 @@ test('leaving during screenshot decoding discards image and acknowledgment even 
   assert.equal(sent.length, 0);
   assert.equal(fx.state.latestImage, '');
   assert.equal(fx.state.screenshotReceivers.size, 0);
+});
+
+test('page navigation retains the room and Num3 toggles only the existing composer', async () => {
+  const fx = fixture(); const peer = fx.state.peer = { phase: 'connected' };
+  fx.state.displayStream = new fx.Stream(); fx.state.room = 'SAME-ROOM';
+  fx.navigatePage('desktop', 'keys');
+  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, 'SAME-ROOM');
+  await fx.dispatchDesktopHotkey('text');
+  assert.equal(fx.state.textInput, true); assert.equal(fx.state.pages.desktop, 'source');
+  assert.equal(fx.document.getElementById('desktop-input-panel').hidden, false);
+  await fx.dispatchDesktopHotkey('text'); assert.equal(fx.state.textInput, false);
+});
+
+test('screenshot auto-question waits for decoding and uses its own image even when automatic reception is disabled', async () => {
+  let decoded; const calls = [], sent = [];
+  const fx = fixture({ decodeScreenshot: () => new Promise(resolve => { decoded = resolve; }), validScreenshotId: () => true, askModel: async args => { calls.push(args); return 'phone only'; } });
+  fx.state.role = 'mobile'; fx.state.peer = { send: async message => sent.push(message) };
+  const image = 'data:image/jpeg;base64,TEST';
+  const receiving = fx.handleMobileMessage({ type: 'screenshot', id: 'new-shot', image, question: '回答图中问题' });
+  await tick(); assert.equal(calls.length, 0);
+  decoded(); await receiving; await tick(); await fx.state.modelQueue;
+  assert.equal(calls.length, 1); assert.equal(calls[0].imageDataUrl, image);
+  assert.equal(calls[0].question, '回答图中问题'); assert.equal(fx.state.pages.mobile, 'chat');
+  assert.deepEqual(sent.map(message => message.type), ['screenshot-ack']);
+  fx.handleDesktopMessage({ type: 'answer', text: 'must never display' });
+  assert.notEqual(fx.document.getElementById('desktop-answer').textContent, 'must never display');
+});
+
+test('one-to-one mode never requests microphone permission', async () => {
+  let microphoneRequests = 0, systemAudioRequested;
+  const video = { kind: 'video', addEventListener() {}, stop() {} }, audio = { kind: 'audio', stop() {} };
+  const fx = fixture({ crypto: { getRandomValues: bytes => bytes.fill(1) },
+    PeerSession: class { setLocalStream() {} async connect() {} disconnect() {} },
+    ScreenshotTransfers: class { cancelAll() {} }, navigator: { mediaDevices: {
+    getDisplayMedia: async options => { systemAudioRequested = options.audio; return new fx.Stream([video, audio]); },
+    getUserMedia: async () => { microphoneRequests++; throw new Error('forbidden'); },
+  } } });
+  fx.document.getElementById('meeting-mode').value = 'one-to-one';
+  fx.document.getElementById('capture-mic').checked = true;
+  await fx.startDesktop(); assert.equal(microphoneRequests, 0); assert.equal(systemAudioRequested, true);
+  assert.equal(fx.state.outgoingStream.getAudioTracks().length, 1);
 });

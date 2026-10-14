@@ -1,56 +1,7 @@
-<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#080d18" />
-    <meta name="description" content="通过 WebRTC 将桌面屏幕与会议问题安全直连到手机 AI 助手。" />
-    <title>P2P Meeting Copilot</title>
-  </head>
-  <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <a class="brand" href="#top" aria-label="P2P Meeting Copilot 首页"><span class="brand-mark">P</span><span><strong>PAIRO</strong><small>MEETING COPILOT</small></span></a>
-        <div class="top-center"><span class="live-dot"></span><span id="top-status">尚未连接</span></div>
-        <div class="mode-switch" role="tablist" aria-label="选择设备角色">
-          <button class="mode-tab active" id="desktop-tab" type="button" role="tab" aria-selected="true">桌面端</button>
-          <button class="mode-tab" id="mobile-tab" type="button" role="tab" aria-selected="false">手机端</button>
-        </div>
-      </header>
-
-      <main id="top">
-        <section class="role-view" id="desktop-view">
-          <div class="intro-row">
-            <div><div class="eyebrow">01 / DESKTOP NODE</div><h1>把问题，<em>送到手机。</em></h1><p>开启屏幕分享后，用快捷键截屏或语音转写。媒体与请求通过加密 WebRTC 直连，不经过信令服务器。</p></div>
-            <div class="privacy-chip"><span class="lock-icon">◇</span><span>仅在你授权时采集</span></div>
-          </div>
-          <div class="desktop-grid">
-            <section class="panel feed-panel">
-              <div class="panel-heading"><div><span class="section-kicker">LIVE FEED</span><h2>桌面画面</h2></div><span class="status-pill" id="desktop-feed-status">未分享</span></div>
-              <div class="screen-frame" id="local-frame">
-                <video id="local-preview" autoplay muted playsinline></video>
-                <div class="screen-empty" id="local-empty"><div class="screen-glyph">▣</div><strong>屏幕预览将在这里出现</strong><span>点击下方按钮并选择要分享的窗口或屏幕</span></div>
-                <div class="frame-corner corner-tl"></div><div class="frame-corner corner-br"></div>
-              </div>
-              <div class="feed-controls">
-                <button class="button button-primary" id="start-share" type="button"><span>◉</span> 开始屏幕分享</button>
-                <button class="button button-quiet" id="take-shot" type="button" disabled>⌗ 截图 <kbd>Alt ⇧ S</kbd></button>
-                <button class="button button-quiet" id="take-region-shot" type="button" disabled>区域截图</button>
-                <button class="button button-quiet" id="change-share" type="button" disabled>更换共享内容</button>
-                <button class="button button-quiet" id="toggle-voice" type="button" disabled>◖ 语音提问 <kbd>Alt ⇧ M</kbd></button>
-                <button class="button button-danger" id="stop-share" type="button" disabled>停止</button>
-              </div>
-              <div class="shot-progress" id="shot-progress" hidden><progress id="shot-progress-bar" max="100" value="0" aria-label="截图传输进度"></progress><span id="shot-progress-text" role="status"></span></div>
-              <div class="capture-options">
-                <label class="check-row"><input id="capture-system-audio" type="checkbox" /><span>共享系统音频</span></label>
-                <label class="check-row"><input id="capture-mic" type="checkbox" checked /><span>同时发送麦克风音频</span></label>
-                <span class="hint">系统音频可能包含其他应用声音。更换共享内容保留配对与声音设置；调整声音需停止后重新开始。</span>
-              </div>
-              <div class="shortcut-note"><span class="shortcut-key">Alt + Shift + S</span><span>截取当前共享画面</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + M</span><span>开始 / 停止语音识别</span><span class="shortcut-divider"></span><span class="shortcut-key">Alt + Shift + A</span><span>切换手机自动回答</span></div>
-            </section>
-
-            <aside class="side-stack">
-              <section class="panel pairing-panel">
+<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" /><meta name="theme-color" content="#245edb" /><meta name="description" content="PAIRO：电脑安静投送，手机阅读回答的 P2P 会议助手。" /><title>PAIRO · 会议助手</title></head><body><div class="app-shell" id="app-shell">
+<header class="topbar"><a class="brand" href="#top" aria-label="PAIRO 首页"><span class="brand-mark">P</span><span><strong>PAIRO</strong><small>会议工作台 / MEETING COPILOT</small></span></a><div class="top-center"><span class="live-dot"></span><span id="top-status">尚未连接</span></div><div class="mode-switch" role="tablist" aria-label="选择设备角色"><button class="mode-tab active" id="desktop-tab" type="button" role="tab" aria-selected="true">上位机</button><button class="mode-tab" id="mobile-tab" type="button" role="tab" aria-selected="false">下位机</button></div></header>
+<main id="top"><section class="role-view" id="desktop-view">
+<section class="workspace-page" id="desktop-pair-page" aria-labelledby="desktop-pair-title"><div class="page-heading"><div><span class="eyebrow">PAIRO / 01 · CONNECTION</span><h1 id="desktop-pair-title">房间配对</h1><p>电脑安静投送，手机从容作答。</p></div><button class="button" id="background-mode" type="button">收起到托盘</button></div><div class="pair-layout"><section class="panel pairing-panel">
                 <div class="panel-heading"><div><span class="section-kicker">PAIRING</span><h2>连接手机</h2></div><span class="step-mark">01</span></div>
                 <p class="panel-copy">开始分享后，在手机程序中扫码，核对地址后连接。也可以手动输入地址与房间码。</p>
                 <div class="room-code-wrap"><div><span class="micro-label">一次性房间码</span><strong id="room-code">等待分享</strong></div><button id="copy-code" class="icon-button" type="button" aria-label="复制房间码" disabled>▣</button></div>
@@ -60,26 +11,46 @@
                 <div class="lan-info" id="desktop-lan-info" hidden><label class="field-label" for="desktop-lan-select">手机连接地址（选择当前 Wi-Fi 或网线）</label><select class="text-input" id="desktop-lan-select"></select><code id="desktop-lan-addresses">启动后显示</code><div class="pairing-actions"><button id="copy-lan-url" class="text-button" type="button">复制所选地址</button><button id="refresh-lan" class="text-button" type="button">刷新地址</button></div></div>
                 <div class="pairing-qr" id="pairing-qr" hidden><img id="pairing-qr-image" alt="手机扫码配对二维码" /><p>在手机程序中点击“扫码配对”。二维码有效期 10 分钟，请勿分享给他人。</p><button id="refresh-qr" class="text-button" type="button">刷新二维码</button></div>
                 <div class="pairing-approval" id="pairing-approval" hidden role="status"><p>有手机申请连接。确认是你的手机后，才允许它接收共享画面与音频。</p><div class="pairing-actions"><button id="allow-peer" class="button button-primary" type="button">允许此手机</button><button id="reject-peer" class="button button-danger" type="button">拒绝</button></div></div>
-              </section>
-              <section class="panel request-panel">
-                <div class="panel-heading"><div><span class="section-kicker">INCOMING</span><h2>最近的问题</h2></div><span class="counter" id="request-count">0</span></div>
-                <div class="empty-note" id="desktop-question-empty">等待手机端配对与问题转写…</div>
-                <div class="transcript-item" id="desktop-question" hidden></div>
-                <div class="answer-box"><span class="micro-label">手机 AI 回复</span><p id="desktop-answer">配对后，手机端生成的答案会同步到这里。</p></div>
-              </section>
-              <div class="notice notice-subtle"><span>ⓘ</span><p>浏览器语音识别可能使用在线服务；仅在会议规则允许时启用，并避免采集敏感内容。</p></div>
-            </aside>
-          </div>
-        </section>
+              </section><aside class="welcome-card"><span class="large-pixel" aria-hidden="true">▣</span><h2>把提示留在手机上。</h2><p>1. 前往“投送窗口选择”，选择需要辅助的窗口。</p><p>2. 手机扫码配对，在电脑允许手机加入。</p><p>3. 设置手机 API，开启会议快捷键，再收起电脑窗口。</p><div class="inset-note">后台不弹出回答、不播放音频。会议助手的文本只在手机展示。</div><p class="warning-text">只分享你主动选择的内容。</p></aside></div></section>
+<section class="workspace-page" id="desktop-source-page" hidden aria-labelledby="desktop-source-title"><div class="page-heading"><div><span class="eyebrow">PAIRO / 02 · CAPTURE</span><h1 id="desktop-source-title">投送窗口选择</h1><p>选定内容后，可以把电脑端收起。</p></div><span class="status-pill">静默投送</span></div><div class="meeting-mode"><label class="field-label" for="meeting-mode">会议模式</label><select id="meeting-mode" class="text-input"><option value="assistant">会议助手 · 麦克风 + 系统音频</option><option value="one-to-one">一对一会议 · 仅系统音频</option></select><p class="hint">窗口画面仅发送给已配对手机。AI 回复不回显电脑，不播放声音。</p></div><section class="panel feed-panel">
+              <div class="panel-heading"><div><span class="section-kicker">LIVE FEED</span><h2>桌面画面</h2></div><span class="status-pill" id="desktop-feed-status">未分享</span></div>
+              <div class="screen-frame" id="local-frame">
+                <video id="local-preview" autoplay muted playsinline></video>
+                <div class="screen-empty" id="local-empty"><div class="screen-glyph">▣</div><strong>屏幕预览将在这里出现</strong><span>点击下方按钮并选择要分享的窗口或屏幕</span></div>
+                <div class="frame-corner corner-tl"></div><div class="frame-corner corner-br"></div>
+              </div>
+              <div class="feed-controls">
+                <button class="button button-primary" id="start-share" type="button"><span>◉</span> 开始屏幕分享</button>
+                <button class="button button-quiet" id="take-shot" type="button" disabled>⌗ 截图并提问 <kbd>Num 1</kbd></button>
+                <button class="button button-quiet" id="take-region-shot" type="button" disabled>区域截图</button>
+                <button class="button button-quiet" id="change-share" type="button" disabled>更换共享内容</button>
+                <button class="button button-quiet" id="toggle-voice" type="button" disabled>◖ 离线语音输入 <kbd>Num 2</kbd></button>
+                <button class="button button-danger" id="stop-share" type="button" disabled>停止</button>
+              </div>
+              <div class="shot-progress" id="shot-progress" hidden><progress id="shot-progress-bar" max="100" value="0" aria-label="截图传输进度"></progress><span id="shot-progress-text" role="status"></span></div>
+              <div class="capture-options" id="capture-options">
+                <label class="check-row"><input id="capture-system-audio" type="checkbox" checked /><span>共享系统音频</span></label>
+                <label class="check-row"><input id="capture-mic" type="checkbox" checked /><span>同时发送麦克风音频</span></label>
+                <span class="hint">系统音频可能包含其他应用声音。更换共享内容保留配对与声音设置；采集权限只在你操作时申请；一对一模式仅接收系统声音。</span>
+              </div>
 
-        <section class="role-view" id="mobile-view" hidden>
-          <div class="intro-row mobile-intro">
-            <div><div class="eyebrow">02 / MOBILE NODE</div><h1>看见桌面，<em>即刻作答。</em></h1><p>连接桌面节点，查看实时画面与音频；将截图或转写问题交给你配置的模型。</p></div>
-            <div class="privacy-chip"><span class="lock-icon">◇</span><span>API Key 仅保存在此页面内存</span></div>
-          </div>
-          <div class="mobile-grid">
-            <div class="mobile-left">
-              <section class="panel connect-panel">
+            </section><section class="panel desktop-input-panel" id="desktop-input-panel" hidden><div class="panel-heading"><h2>文本投送</h2><span class="status-pill">Num 3 开关</span></div><form id="desktop-composer" class="composer"><textarea id="desktop-text" rows="2" maxlength="12000" placeholder="输入要交给手机的问题…" aria-label="桌面文本问题"></textarea><button class="button button-primary" type="submit">发送</button></form><p class="hint">仅此输入栏接收文字。快捷键不弹窗，也不读取其他程序输入。</p></section><div class="dispatch-status"><span>已投送 <b id="request-count">0</b> 条</span><span id="desktop-question-empty">等待手机连接</span><span id="desktop-question" hidden></span><span id="desktop-answer" hidden></span><span id="desktop-activity" role="status">就绪</span></div></section>
+<section class="workspace-page" id="desktop-keys-page" hidden aria-labelledby="desktop-keys-title"><div class="page-heading"><div><span class="eyebrow">PAIRO / 03 · CONTROLS</span><h1 id="desktop-keys-title">快捷键设置</h1><p>让常用操作停留在指尖。</p></div></div><section class="panel settings-panel"><div class="panel-heading"><div><span class="section-kicker">KEYBOARD / 03</span><h2>快捷键设置</h2></div><span class="status-pill">本机保存</span></div>
+<p class="panel-copy">开启会议快捷键后可在后台操作。使用小键盘 Num Lock；↑ / ↓ 会被本程序占用，可改为组合键。</p>
+<form id="shortcut-form"><div class="shortcut-table">
+<label for="key-screenshot"><kbd>01</kbd> 截屏发送并自动提问</label><input id="key-screenshot" class="text-input" value="num1" aria-label="截屏快捷键" />
+<label for="key-voice"><kbd>02</kbd> 开启 / 关闭语音输入</label><input id="key-voice" class="text-input" value="num2" aria-label="语音快捷键" />
+<label for="key-text"><kbd>03</kbd> 开启 / 关闭文本输入</label><input id="key-text" class="text-input" value="num3" aria-label="文本快捷键" />
+<label for="key-scroll-up"><kbd>↑</kbd> 手机助手向上滚动</label><input id="key-scroll-up" class="text-input" value="Up" aria-label="向上滚动快捷键" />
+<label for="key-scroll-down"><kbd>↓</kbd> 手机助手向下滚动</label><input id="key-scroll-down" class="text-input" value="Down" aria-label="向下滚动快捷键" />
+</div><div class="pairing-actions"><button class="button button-primary" type="submit">保存快捷键</button><button id="reset-shortcuts" class="button" type="button">恢复默认</button></div></form>
+<label class="check-row hotkey-enable"><input id="shortcuts-enabled" type="checkbox" /><span>启用会议快捷键（仅分享期间生效）</span></label><p id="shortcut-status" class="hint" role="status">未启用；不会占用其他程序按键。</p>
+<label class="field-label" for="screenshot-question">截图后自动提问</label><input id="screenshot-question" class="text-input" value="请回答图中的问题。" maxlength="500" />
+<div class="settings-divider"></div><h3>本机离线语音</h3><p class="panel-copy">将电脑系统声音与麦克风混合转写，再把文字发到手机。一对一模式不采麦克风。首次下载识别引擎与模型后可离线使用；AI 回答仍使用手机配置的服务。</p>
+<div class="pairing-actions"><button id="install-speech" class="button" type="button">下载离线语音组件</button><span id="speech-status" class="hint" role="status">尚未检测离线组件</span></div>
+<p class="warning-text">会议前先完成设置；更换音频来源需要重新开始分享。</p></section></section><nav class="bottom-nav" aria-label="桌面功能导航"><button type="button" id="desktop-nav-pair" aria-controls="desktop-pair-page" aria-current="page"><span class="nav-icon" aria-hidden="true">▣</span><span>房间配对</span><small>01</small></button><button type="button" id="desktop-nav-source" aria-controls="desktop-source-page" ><span class="nav-icon" aria-hidden="true">▤</span><span>投送窗口选择</span><small>02</small></button><button type="button" id="desktop-nav-keys" aria-controls="desktop-keys-page" ><span class="nav-icon" aria-hidden="true">⌨</span><span>快捷键设置</span><small>03</small></button></nav></section>
+<section class="role-view" id="mobile-view" hidden>
+<section class="workspace-page" id="mobile-pair-page" aria-labelledby="mobile-pair-title"><div class="page-heading"><div><span class="eyebrow">PAIRO / 01 · CONNECTION</span><h1 id="mobile-pair-title">房间配对</h1><p>连接电脑，带上你的随身会议助手。</p></div></div><section class="panel connect-panel">
                 <div class="panel-heading"><div><span class="section-kicker">CONNECT</span><h2>配对桌面</h2></div><span class="step-mark">01</span></div>
                 <form id="mobile-connect" class="connect-form">
                   <label class="field-label" for="mobile-signal">信令服务地址</label><input class="text-input" id="mobile-signal" inputmode="url" autocomplete="url" placeholder="http://电脑局域网IP:端口" required />
@@ -90,42 +61,34 @@
                 <div class="connection-line"><span class="mini-dot" id="mobile-dot"></span><span id="mobile-status">尚未连接</span></div>
                 <button id="leave-room" class="button button-quiet leave-room" type="button" hidden>断开当前房间</button>
                 <button id="reconnect-room" class="text-button" type="button" hidden>重新连接</button>
-              </section>
-              <section class="panel monitor-panel">
+              </section><div class="inset-note">电脑与手机需要连接同一局域网。也可以让电脑连接此手机的热点。</div></section>
+<section class="workspace-page" id="mobile-api-page" hidden aria-labelledby="mobile-api-title"><div class="page-heading"><div><span class="eyebrow">PAIRO / 02 · MODEL</span><h1 id="mobile-api-title">API-KEY 配置</h1><p>把你熟悉的模型带到会议里。</p></div></div><section class="panel model-panel">
+                <div class="panel-heading"><div><span class="section-kicker">MODEL SETUP</span><h2>API-KEY 配置</h2></div><span class="step-mark">02</span></div>
+                <div class="form-grid">
+                  <div class="span-two"><label class="field-label" for="llm-endpoint">API 地址（Chat Completions）</label><input class="text-input" id="llm-endpoint" type="url" placeholder="https://api.example.com/v1/chat/completions" /></div>
+                  <div><label class="field-label" for="llm-model">模型名称</label><input class="text-input" id="llm-model" placeholder="gpt-4o-mini" /></div>
+                  <div><label class="field-label" for="llm-key">API Key</label><input class="text-input" id="llm-key" type="password" autocomplete="off" placeholder="仅本次页面会话使用" /></div>
+                </div>
+                <div class="model-actions"><label class="check-row"><input id="auto-answer" type="checkbox" checked /><span>收到普通问题后自动请求模型</span></label><span class="save-hint" id="config-hint">Key 不会保存或发送给信令服务</span></div>
+                <p class="hint">从 AI 服务商复制完整的 Chat Completions 地址、模型名称与 API Key。截图分析需要支持图片的模型。</p>
+                <div class="pairing-actions"><button id="test-model" class="button button-quiet" type="button">测试 AI 配置</button><span class="hint" id="model-test-status">测试会发送一条简短文字，可能计入服务商用量。</span></div>
+              </section><div class="inset-note">API Key 只在本次运行的内存中，退出后需重新填写。问题和截图只发送给你配置的 AI 服务。</div></section>
+<section class="workspace-page assistant-page" id="mobile-chat-page" hidden aria-labelledby="mobile-chat-title"><h1 id="mobile-chat-title" class="sr-only">会议助手</h1><section class="panel conversation-panel">
+                <div class="panel-heading"><div><span class="section-kicker">COPILOT</span><h2>会议助手 · 聊天室</h2></div><button class="text-button" id="clear-chat" type="button">清空</button></div>
+                <div class="attachment-strip" id="attachment-strip" hidden><img id="attachment-thumb" alt="最近收到的桌面截图" /><div><span class="micro-label">已附加桌面截图</span><span class="attachment-caption">可在提问时一并发送给模型</span></div><button id="remove-attachment" class="icon-button" type="button" aria-label="移除截图">×</button></div>
+                <div class="message-list" id="message-list" aria-live="polite"><div class="conversation-empty" id="conversation-empty"><span class="empty-orbit">✳</span><strong>你的下一句，就在这里</strong><p>电脑静默投送问题，回答只在此处显示。像一份持续更新的演讲稿。</p></div></div>
+                <form id="composer" class="composer"><textarea id="question-input" rows="1" placeholder="输入问题，或等待桌面端快捷键…" aria-label="输入问题"></textarea><button class="send-button" id="send-button" type="submit" aria-label="发送问题">↑</button></form>
+                <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><span>仅文字 · 安静阅读</span></div>
+                <div class="pairing-actions"><span class="hint" id="model-queue-status">没有待处理请求</span><button id="cancel-model" class="text-button" type="button" hidden>取消等待</button><button id="retry-model" class="text-button" type="button" hidden>重试上次失败的问题</button></div>
+              </section><details class="live-monitor" id="live-monitor"><summary>一对一会议 · 查看电脑画面与声音</summary><section class="panel monitor-panel">
                 <div class="panel-heading"><div><span class="section-kicker">DESKTOP MONITOR</span><h2>实时桌面</h2></div><button id="enable-audio" class="text-button" type="button">开启声音</button></div>
                 <div class="screen-frame remote-frame">
                   <video id="remote-preview" autoplay muted playsinline></video>
                   <div class="screen-empty" id="remote-empty"><div class="screen-glyph">◌</div><strong>等待桌面画面</strong><span>连接后实时接收，不在信令服务器留存</span></div>
                 </div>
-                <audio id="remote-audio" autoplay controls></audio>
+                <audio id="remote-audio" controls muted></audio>
                 <div class="monitor-foot"><span><span class="mini-dot"></span> WebRTC 加密媒体</span><span id="media-hint">音频需点击开启</span></div>
-              </section>
-            </div>
-
-            <div class="mobile-right">
-              <section class="panel model-panel">
-                <div class="panel-heading"><div><span class="section-kicker">MODEL SETUP</span><h2>模型配置</h2></div><span class="step-mark">02</span></div>
-                <div class="form-grid">
-                  <div class="span-two"><label class="field-label" for="llm-endpoint">OpenAI-compatible API 地址</label><input class="text-input" id="llm-endpoint" type="url" placeholder="https://api.example.com/v1/chat/completions" /></div>
-                  <div><label class="field-label" for="llm-model">模型名称</label><input class="text-input" id="llm-model" placeholder="gpt-4o-mini" /></div>
-                  <div><label class="field-label" for="llm-key">API Key</label><input class="text-input" id="llm-key" type="password" autocomplete="off" placeholder="仅本次页面会话使用" /></div>
-                </div>
-                <div class="model-actions"><label class="check-row"><input id="auto-answer" type="checkbox" /><span>收到问题后自动请求模型</span></label><span class="save-hint" id="config-hint">Key 不会保存或发送给信令服务</span></div>
-                <p class="hint">从 AI 服务商复制完整的 Chat Completions 地址、模型名称与 API Key。截图分析需要支持图片的模型。</p>
-                <div class="pairing-actions"><button id="test-model" class="button button-quiet" type="button">测试 AI 配置</button><span class="hint" id="model-test-status">测试会发送一条简短文字，可能计入服务商用量。</span></div>
-              </section>
-              <section class="panel conversation-panel">
-                <div class="panel-heading"><div><span class="section-kicker">COPILOT</span><h2>问题与回答</h2></div><button class="text-button" id="clear-chat" type="button">清空</button></div>
-                <div class="attachment-strip" id="attachment-strip" hidden><img id="attachment-thumb" alt="最近收到的桌面截图" /><div><span class="micro-label">已附加桌面截图</span><span class="attachment-caption">可在提问时一并发送给模型</span></div><button id="remove-attachment" class="icon-button" type="button" aria-label="移除截图">×</button></div>
-                <div class="message-list" id="message-list" aria-live="polite"><div class="conversation-empty" id="conversation-empty"><span class="empty-orbit">✳</span><strong>准备好接收桌面请求</strong><p>截图与转写文本会显示在这里。你也可以直接输入问题。</p></div></div>
-                <form id="composer" class="composer"><textarea id="question-input" rows="2" placeholder="输入问题，或等待桌面端快捷键…" aria-label="输入问题"></textarea><button class="send-button" id="send-button" type="submit" aria-label="发送问题">↑</button></form>
-                <div class="composer-foot"><span>Enter 发送 · Shift + Enter 换行</span><button id="speak-answer" type="button" class="text-button">朗读最近答复</button></div>
-                <div class="pairing-actions"><span class="hint" id="model-queue-status">没有待处理请求</span><button id="cancel-model" class="text-button" type="button" hidden>取消等待</button><button id="retry-model" class="text-button" type="button" hidden>重试上次失败的问题</button></div>
-              </section>
-            </div>
-          </div>
-        </section>
-      </main>
+              </section></details></section><nav class="bottom-nav" aria-label="手机功能导航"><button type="button" id="mobile-nav-pair" aria-controls="mobile-pair-page" aria-current="page"><span class="nav-icon" aria-hidden="true">▣</span><span>房间配对</span><small>01</small></button><button type="button" id="mobile-nav-api" aria-controls="mobile-api-page" ><span class="nav-icon" aria-hidden="true">⚿</span><span>API-KEY配置</span><small>02</small></button><button type="button" id="mobile-nav-chat" aria-controls="mobile-chat-page" ><span class="nav-icon" aria-hidden="true">▤</span><span>会议助手</span><small>03</small></button></nav></section></main>
       <dialog id="region-dialog" class="region-dialog" aria-labelledby="region-title">
         <h2 id="region-title">选择本次截图的区域</h2><p>拖动框选要发送的内容，也可以输入下方百分比。区域选择只影响本次截图；实时分享范围由此前选择的屏幕或窗口决定。</p>
         <div class="region-preview-wrap"><canvas id="region-preview" aria-label="截图区域预览"></canvas><div id="region-box" class="region-box" hidden></div></div>
@@ -134,9 +97,4 @@
       </dialog>
       <dialog id="diagnostics-dialog" class="region-dialog" aria-labelledby="diagnostics-title"><h2 id="diagnostics-title">连接诊断</h2><p>复制下方信息附到问题描述，方便排查连接。这里只记录版本、连接状态和媒体轨道数量；不包含画面、问题、Key、地址或房间码。</p><textarea id="diagnostics-text" class="text-input" rows="14" readonly aria-label="可复制的诊断信息"></textarea><div class="pairing-actions"><button id="close-diagnostics" class="button button-quiet" type="button">关闭</button><button id="copy-diagnostics" class="button button-primary" type="button">复制诊断信息</button></div></dialog>
       <dialog id="updates-dialog" class="region-dialog" aria-labelledby="updates-title"><h2 id="updates-title">版本与更新</h2><p id="app-version"></p><p>点击“检查新版本”会向 GitHub 查询正式版本，不需要填写密钥。私有仓库请在浏览器登录后查看发布页。</p><p id="update-status" role="status">更新前先结束会话；下载同一版本的 EXE 和 APK。电脑关闭旧程序后替换 EXE，保留旁边的 PAIRO-data 文件夹；手机打开新 APK 覆盖安装。0.1.0 调试包首次迁移到正式签名需按 README 指导操作。</p><div class="pairing-actions"><button id="close-updates" class="button button-quiet" type="button">关闭</button><button id="check-updates" class="button button-quiet" type="button">检查新版本</button><button id="open-releases" class="button button-primary" type="button">打开发布页下载</button></div></dialog>
-      <footer class="app-footer"><span>PAIRO <span class="footer-dot">·</span> P2P MEETING COPILOT</span><span>屏幕与音频直连；信令仅转发协商信息</span><button id="show-diagnostics" class="text-button" type="button">连接诊断</button><button id="show-updates" class="text-button" type="button">版本与更新</button></footer>
-      <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    </div>
-    <script type="module" src="/src/main.js"></script>
-  </body>
-</html>
+<footer class="app-footer"><span>PAIRO · 轻声辅助，从容表达</span><div><button id="show-diagnostics" class="text-button" type="button">连接诊断</button><button id="show-updates" class="text-button" type="button">版本与更新</button></div></footer><div class="toast" id="toast" role="status" aria-live="polite"></div></div><script type="module" src="/src/main.js"></script></body></html>

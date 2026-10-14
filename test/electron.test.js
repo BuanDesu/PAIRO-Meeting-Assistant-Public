@@ -56,7 +56,7 @@ test('preferences survive store recreation and never persist API keys', async t 
 
 test('cancelled screen picker consumes the Electron callback exactly once even when it throws', async () => {
   const source = await readFile(new URL('../electron/main.cjs', import.meta.url), 'utf8');
-  const fragment = source.slice(source.indexOf('function configureDisplayCapture()'), source.indexOf('function registerShortcuts()'));
+  const fragment = source.slice(source.indexOf('function configureDisplayCapture()'), source.indexOf('function updateGlobalShortcuts('));
   let handler;
   const frame = { url: 'http://127.0.0.1:5000/' };
   vm.runInNewContext(fragment + '\nconfigureDisplayCapture();', {
