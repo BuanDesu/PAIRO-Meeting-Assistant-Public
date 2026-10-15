@@ -3,6 +3,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
+const toSimplified = require('opencc-js/t2cn').Converter({ from: 't', to: 'cn' });
 
 const ENGINE = { url: 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-bin-x64.zip', size: 3968674, sha256: 'd824b1e37599f882b396e73f1ee0bfd5d0529f700314c48311dcbd00b803321d' };
 const MODEL = { url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin', size: 77691713, sha256: 'be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21' };
@@ -127,7 +128,7 @@ function createOfflineSpeech(directory, { platform = process.platform, arch = pr
         if (current !== generation) throw new Error('离线转写已取消');
         await run(await executable(), ['-m', model, '-f', input, '-l', 'auto', '-t', String(Math.max(1, Math.min(4, os.availableParallelism() - 1))), '-ng', '-np', '-nt', '-otxt', '-of', output], { signal: controller.signal });
         if (current !== generation) return '';
-        return (await fs.readFile(output + '.txt', 'utf8')).trim().slice(0, 12000);
+        return toSimplified((await fs.readFile(output + '.txt', 'utf8')).trim()).slice(0, 12000);
       } finally { try { if (temporary) await removeOwned(temporary); } finally { busy = false; controller = null; } }
     },
   };
