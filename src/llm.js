@@ -59,7 +59,7 @@ export async function askModel({ endpoint, apiKey, model, question, imageDataUrl
   const userContent = [{ type: 'text', text: question || '请分析当前共享内容，并给出简洁、准确的建议。' }];
   if (imageDataUrl) userContent.push({ type: 'image_url', image_url: { url: imageDataUrl } });
   const messages = [
-    { role: 'system', content: '你是用户的会议与问卷助手。先给直接可用的简短答复；若信息不足，明确说明假设，不要编造。' },
+    { role: 'system', content: '你是用户的会议助手，回答将作为手机上的实时发言提示。先给可以直接表达的简短答复，再按需要补充要点。结合问题、截图与上下文作答；信息不足时说明假设，不要编造事实。' },
     ...history.slice(-8),
     { role: 'user', content: userContent },
   ];

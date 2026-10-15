@@ -1,5 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdir, copyFile, writeFile, stat, readFile } from 'node:fs/promises';
+import { mkdir, copyFile, writeFile, stat, readFile, rm } from 'node:fs/promises';
+import { resolve, relative, isAbsolute } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { createConnection } from 'node:net';
@@ -53,7 +55,7 @@ for (let run = 0; run < 2; run++) {
       if (spawnError) throw spawnError;
       try {
         const targets = await (await fetch('http://127.0.0.1:9226/json/list')).json();
-        target = targets.find(item => item.type === 'page' && item.title === 'P2P Meeting Copilot' && item.url.startsWith('http://127.0.0.1:'));
+        target = targets.find(item => item.type === 'page' && item.url.startsWith('http://127.0.0.1:'));
       } catch { /* The portable executable is still extracting or starting. */ }
       if (!target) await pause(150);
     }
@@ -82,7 +84,10 @@ for (let run = 0; run < 2; run++) {
     if (!ready) throw new Error('PAIRO UI did not become ready.');
     const result = { run: run + 1, profile: run === 0 && !profileExists ? 'new' : 'existing', uiReadySeconds: Number(((performance.now() - start) / 1000).toFixed(3)), includesPortableExtraction: !unpacked && !zipDirectory };
     results.push(result); console.log(JSON.stringify(result));
-    await evaluate('(()=>{setTimeout(()=>window.close(),100);return true;})()');
+    // Close now intentionally means "hide to tray". This probe owns a capture-free test process.
+    await evaluate('(async()=>{await window.desktopBridge.hideToTray();return true;})()');
+    const terminated = spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    if (terminated.error || terminated.status !== 0) throw new Error('Cannot terminate isolated startup probe');
     let exitTimer;
     const closed = await Promise.race([exited.then(() => true), new Promise(resolve => { exitTimer = setTimeout(() => resolve(false), 30000); })]);
     clearTimeout(exitTimer);
@@ -94,6 +99,12 @@ for (let run = 0; run < 2; run++) {
         const cleanup = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
         cleanup.once('exit', resolve); cleanup.once('error', resolve);
       });
+    }
+    if (!unpacked && !zipDirectory && Number.isInteger(child.pid)) {
+      const tempRoot = resolve(process.env.TEMP || tmpdir());
+      const extracted = resolve(tempRoot, `PAIRO-${pkg.version}-${child.pid}`), rel = relative(tempRoot, extracted);
+      if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new Error('Startup cleanup escaped temporary root');
+      await rm(extracted, { recursive: true, force: true });
     }
   }
 }

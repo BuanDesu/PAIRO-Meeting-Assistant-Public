@@ -3,6 +3,12 @@
   "appName": "Pairo Meeting Copilot",
   "webDir": "dist",
   "loggingBehavior": "none",
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "initialViewportFitValueHint": "cover"
+    }
+  },
   "server": {
     "androidScheme": "http",
     "cleartext": true

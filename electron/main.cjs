@@ -4,11 +4,13 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createServer } = require('node:http');
-const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell, Tray, Menu, nativeImage, net } = require('electron');
 const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
 const { createPreferencesStore } = require('./preferences.cjs');
 const { lanAddresses } = require('./network.cjs');
 const { showCapturePicker } = require('./capture-picker.cjs');
+const { createShortcutManager } = require('./shortcuts.cjs');
+const { createOfflineSpeech } = require('./offline-speech.cjs');
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || (app.isPackaged ? path.dirname(app.getPath('exe')) : '');
 if (portableDir) {
@@ -27,6 +29,8 @@ let uiPort;
 let signalingPort;
 let registeredShortcuts = [];
 let preferencesStore;
+let shortcutManager, offlineSpeech, tray, quitting = false, meetingActive = false;
+let shortcutWrites = Promise.resolve();
 const uiOrigin = () => uiPort ? 'http://127.0.0.1:' + uiPort : '';
 function trustedContents(contents, details = {}) {
   return Boolean(mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents
@@ -176,28 +180,35 @@ function configureDisplayCapture() {
   }, { useSystemPicker: true });
 }
 
-function registerShortcuts() {
-  const bindings = [
-    ['Alt+Shift+S', 'screenshot'],
-    ['Alt+Shift+M', 'voice'],
-    ['Alt+Shift+A', 'auto-answer'],
-  ];
-  for (const [accelerator, action] of bindings) {
-    const registered = globalShortcut.register(accelerator, () => {
-      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-shortcut', action);
-    });
-    if (registered) registeredShortcuts.push(accelerator);
-    else console.warn('Unable to register global shortcut:', accelerator);
+function updateGlobalShortcuts(value = {}) {
+  // When our window is focused, DOM shortcuts respect editable fields. Global keys are for background use.
+  const result = shortcutManager.update({ ...value, active: meetingActive && !mainWindow?.isFocused() });
+  registeredShortcuts = result.registered; return result;
+}
+function restoreWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+}
+function createTray() {
+  const pixels = Buffer.alloc(32 * 32 * 4);
+  for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+    const i = (y * 32 + x) * 4, letter = (x >= 8 && x <= 11 && y >= 6 && y <= 26) || (x >= 11 && x <= 23 && (y >= 6 && y <= 9 || y >= 15 && y <= 18)) || (x >= 21 && x <= 24 && y >= 9 && y <= 15);
+    pixels[i] = letter ? 245 : 180; pixels[i + 1] = letter ? 245 : 80; pixels[i + 2] = letter ? 245 : 25; pixels[i + 3] = 255;
   }
+  tray = new Tray(nativeImage.createFromBitmap(pixels, { width: 32, height: 32, scaleFactor: 1 }));
+  tray.setToolTip('PAIRO · 静默会议助手');
+  tray.setContextMenu(Menu.buildFromTemplate([{ label: '打开 PAIRO', click: restoreWindow }, { type: 'separator' }, { label: '退出并结束会话', click: () => { quitting = true; app.quit(); } }]));
+  tray.on('double-click', restoreWindow);
 }
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1480,
-    height: 960,
-    minWidth: 980,
-    minHeight: 700,
-    backgroundColor: '#080d18',
+    width: 1160,
+    height: 880,
+    minWidth: 860,
+    minHeight: 620,
+    backgroundColor: '#ece9d8',
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -205,9 +216,18 @@ async function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: false,
     },
   });
   mainWindow.removeMenu();
+  mainWindow.webContents.setAudioMuted(true);
+  mainWindow.on('close', event => { if (!quitting && tray) { event.preventDefault(); mainWindow.hide(); } });
+  mainWindow.on('focus', () => { try { updateGlobalShortcuts(); } catch { /* status is reported on settings refresh */ } });
+  mainWindow.on('blur', () => {
+    try { updateGlobalShortcuts(); }
+    catch (error) { mainWindow?.webContents.send('desktop-shortcut-error', error.message); }
+  });
+  mainWindow.webContents.on('render-process-gone', () => { meetingActive = false; shortcutManager.clear(); offlineSpeech.cancel(); });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUiUrl(url, uiOrigin())) event.preventDefault();
@@ -238,17 +258,51 @@ ipcMain.handle('desktop:open-releases', event => {
   requireTrustedIpc(event);
   return shell.openExternal('https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest');
 });
+ipcMain.handle('desktop:hide-to-tray', event => { requireTrustedIpc(event); mainWindow.hide(); });
+ipcMain.handle('desktop:shortcuts-read', event => { requireTrustedIpc(event); return shortcutManager.snapshot(); });
+ipcMain.handle('desktop:shortcuts-write', (event, value) => {
+  requireTrustedIpc(event);
+  if (!value || typeof value !== 'object' || typeof value.active !== 'boolean' || typeof value.enabled !== 'boolean') throw new Error('快捷键状态不正确');
+  const update = shortcutWrites.catch(() => {}).then(async () => {
+    const oldActive = meetingActive; meetingActive = value.active;
+    let result;
+    try {
+      // Probe while the settings window is focused too, so Save can report conflicts immediately.
+      if (meetingActive && value.enabled) shortcutManager.update({ bindings: value.bindings, enabled: true, active: true });
+      result = updateGlobalShortcuts({ bindings: value.bindings, enabled: value.enabled });
+    }
+    catch (error) { meetingActive = oldActive; throw error; }
+    if (value.save === true) {
+      const file = path.join(app.getPath('userData'), 'shortcuts.json');
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file + '.tmp', JSON.stringify({ bindings: result.bindings, enabled: result.enabled }), { mode: 0o600 });
+      await fs.rename(file + '.tmp', file);
+    }
+    return result;
+  });
+  shortcutWrites = update; return update;
+});
+ipcMain.handle('desktop:speech-status', event => { requireTrustedIpc(event); return offlineSpeech.status(); });
+ipcMain.handle('desktop:speech-install', event => { requireTrustedIpc(event); return offlineSpeech.install(); });
+ipcMain.handle('desktop:speech-transcribe', (event, pcm) => { requireTrustedIpc(event); return offlineSpeech.transcribe(pcm); });
+ipcMain.handle('desktop:speech-cancel', event => { requireTrustedIpc(event); offlineSpeech.cancel(); });
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
   try {
     app.setAppUserModelId('com.pairo.meetingcopilot');
     preferencesStore = createPreferencesStore(app.getPath('userData'));
+    const { DEFAULT_SHORTCUTS, validateShortcuts } = await import(pathToFileURL(path.join(app.getAppPath(), 'src', 'shortcuts.js')).href);
+    shortcutManager = createShortcutManager({ globalShortcut, defaults: DEFAULT_SHORTCUTS, validate: validateShortcuts,
+      dispatch: action => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-shortcut', action); } });
+    try { const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'shortcuts.json'), 'utf8')); shortcutManager.update({ ...saved, active: false }); }
+    catch { /* Missing or invalid settings use disabled defaults. */ }
+    offlineSpeech = createOfflineSpeech(app.getPath('userData'), { fetchImpl: (...args) => net.fetch(...args) }); await offlineSpeech.initialize();
     configureMediaPermissions();
     configureDisplayCapture();
     await startServices();
     await createWindow();
-    registerShortcuts();
+    createTray();
   } catch (error) {
     dialog.showErrorBox('PAIRO 启动失败', error.message || String(error));
     app.quit();
@@ -260,6 +314,9 @@ app.on('activate', async () => {
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  quitting = true;
+  offlineSpeech?.cancel();
+  tray?.destroy(); tray = null;
   globalShortcut.unregisterAll();
   signaling?.wss.close();
   signaling?.server.close();

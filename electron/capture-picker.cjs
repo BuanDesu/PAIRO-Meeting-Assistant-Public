@@ -9,7 +9,7 @@ function showCapturePicker({ parent, sources, BrowserWindow, ipcMain, timeoutMs 
     const file = path.join(__dirname, 'capture-picker.html'), url = pathToFileURL(file).href;
     const picker = new BrowserWindow({
       parent, modal: true, width: 880, height: 700, minWidth: 560, minHeight: 420, show: false,
-      title: '选择共享内容', backgroundColor: '#0b1421',
+      title: '选择共享内容', backgroundColor: '#ece9d8',
       webPreferences: { preload: path.join(__dirname, 'capture-picker-preload.cjs'), sandbox: true,
         contextIsolation: true, nodeIntegration: false, webSecurity: true,
         partition: 'pairo-capture-' + token, additionalArguments: ['--pairo-capture-token=' + token] },

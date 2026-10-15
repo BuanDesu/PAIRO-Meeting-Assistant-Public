@@ -11,6 +11,8 @@ import { cropCanvas, screenshotPayload, decodeScreenshot } from './screenshot.js
 import { selectScreenshotRegion } from './screenshot-region.js';
 import { connectionDiagnostics } from './diagnostics.js';
 import { RELEASES_URL, checkLatestRelease, updateMessage } from './updates.js';
+import { DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent } from './shortcuts.js';
+import { OfflineVoiceInput } from './voice-input.js';
 
 const $ = id => document.getElementById(id);
 const state = {
@@ -24,6 +26,8 @@ const state = {
   screenshotTransfers: null, screenshotController: null, screenshotGeneration: 0, screenshotBusy: false,
   screenshotReceivers: new Set(),
   captureSwitchPending: false,
+  pages: { desktop: 'pair', mobile: 'pair' }, shortcuts: { ...DEFAULT_SHORTCUTS }, shortcutsEnabled: false,
+  textInput: false, voiceInput: null, voiceGeneration: 0, manualReading: false,
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
@@ -70,7 +74,7 @@ function resetConversation() {
   updateModelQueue();
   state.latestImage = '';
   state.chatHistory = [];
-  state.lastAnswer = '';
+  state.lastAnswer = ''; state.manualReading = false;
   $('send-button').disabled = false;
   $('message-list').querySelectorAll('.chat-message').forEach(node => node.remove());
   $('conversation-empty').hidden = false;
@@ -114,6 +118,7 @@ function resetMobileMedia() {
   $('media-hint').textContent = '音频需点击开启';
 }
 function toast(message) {
+  if (state.role === 'desktop') { $('desktop-activity').textContent = message; return; }
   const node = $('toast');
   node.textContent = message;
   node.classList.add('show');
@@ -133,6 +138,7 @@ function setRole(role) {
   stopDesktop(false);
   resetMobileMedia();
   state.role = role;
+  navigatePage(role, state.pages[role]);
   $('desktop-view').hidden = role !== 'desktop';
   $('mobile-view').hidden = role !== 'mobile';
   $('desktop-tab').classList.toggle('active', role === 'desktop');
@@ -147,6 +153,10 @@ function randomRoomCode() {
   return Array.from(bytes, value => alphabet[value % alphabet.length]).join('');
 }
 function setFeedActive(active) {
+  void syncShortcuts();
+  $('meeting-mode').disabled = active;
+  $('capture-mic').disabled = active || $('meeting-mode').value === 'one-to-one';
+  $('capture-system-audio').disabled = active || $('meeting-mode').value === 'one-to-one';
   $('local-empty').hidden = active;
   $('local-preview').classList.toggle('visible', active);
   $('desktop-feed-status').textContent = active ? '正在分享' : '未分享';
@@ -171,7 +181,7 @@ function makePeer(role) {
     },
     onMessage: message => state.peer === peer ? (role === 'mobile' ? handleMobileMessage(message) : handleDesktopMessage(message)) : undefined,
     onStream: stream => state.peer === peer && role === 'mobile' ? attachRemoteStream(stream) : null,
-    onPeerLeft: () => { if (state.peer === peer) resetConversation(); },
+    onPeerLeft: () => { if (state.peer === peer) { stopVoice(false); resetConversation(); } },
     onApproval: () => { if (state.peer === peer && role === 'desktop') $('pairing-approval').hidden = false; },
   });
   return peer;
@@ -179,10 +189,16 @@ function makePeer(role) {
 
 async function dispatchDesktopHotkey(action) {
   if (state.role !== 'desktop' || !state.displayStream) return;
-  if (action === 'screenshot') takeScreenshot();
+  if (action === 'screenshot') void takeScreenshot(false, true);
   if (action === 'voice') state.voiceActive ? stopVoice(true) : startVoice();
-  if (action === 'auto-answer') {
-    try { await state.peer.send({ type: 'control', action: 'toggle-auto-answer' }); }
+  if (action === 'text') {
+    state.textInput = !state.textInput;
+    $('desktop-input-panel').hidden = !state.textInput;
+    if (state.textInput) navigatePage('desktop', 'source');
+    toast(state.textInput ? '文本输入已开启（在主窗口输入）' : '文本输入已关闭');
+  }
+  if (action === 'scroll-up' || action === 'scroll-down') {
+    try { await state.peer.send({ type: 'control', action }); }
     catch (error) { toast(error.message); }
   }
 }
@@ -269,7 +285,7 @@ async function startDesktop() {
   try {
     const display = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: { ideal: 12, max: 20 } },
-      audio: $('capture-system-audio').checked,
+      audio: $('meeting-mode').value === 'one-to-one' || $('capture-system-audio').checked,
     });
     if (!current()) { display.getTracks().forEach(track => track.stop()); return; }
     state.displayStream = display;
@@ -277,7 +293,7 @@ async function startDesktop() {
     $('stop-share').disabled = false;
     $('local-preview').srcObject = display;
     const tracks = [...display.getTracks()];
-    if ($('capture-mic').checked) {
+    if ($('capture-mic').checked && $('meeting-mode').value !== 'one-to-one') {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         if (!current()) { mic.getTracks().forEach(track => track.stop()); return; }
@@ -331,6 +347,7 @@ function stopDesktop(showToast = true) {
   $('pairing-approval').hidden = true;
   $('reconnect-desktop').hidden = true;
   state.room = '';
+  state.textInput = false; $('desktop-input-panel').hidden = true; $('desktop-text').value = '';
   void refreshPairingQr();
   setStatus('desktop', '尚未连接');
   if (showToast) toast('桌面分享已停止');
@@ -350,10 +367,13 @@ async function changeDesktopCapture() {
     const outgoing = new MediaStream([...display.getTracks(), ...retained]);
     await peer.replaceLocalStream(outgoing);
     if (!current()) return;
+    const resumeVoice = state.voiceActive;
+    if (resumeVoice) stopVoice(false);
     state.displayStream = display; state.outgoingStream = outgoing; accepted = true;
     $('local-preview').srcObject = display;
     display.getVideoTracks()[0].addEventListener('ended', () => { if (current() && state.displayStream === display) stopDesktop(true); }, { once: true });
     previous.getTracks().forEach(track => track.stop());
+    if (resumeVoice) void startVoice();
     toast('共享内容已更换，手机配对与声音设置保持不变');
   } catch (error) {
     if (current()) toast(captureNotSelected(error) ? '未更换共享内容，继续分享原来的画面' : '更换未完成：' + error.message);
@@ -367,7 +387,7 @@ async function changeDesktopCapture() {
   }
 }
 
-async function takeScreenshot(region = false) {
+async function takeScreenshot(region = false, autoAsk = true) {
   const video = $('local-preview');
   if (!video.videoWidth || !video.videoHeight) return toast('画面尚未准备好，请稍后重试');
   if (state.screenshotBusy) return toast('上一张截图仍在处理，请稍后再试');
@@ -384,6 +404,7 @@ async function takeScreenshot(region = false) {
     if (!canvas || !current()) return;
     let payload;
     try { payload = screenshotPayload(canvas); } finally { canvas.width = 0; canvas.height = 0; }
+    if (autoAsk) payload.question = $('screenshot-question').value.trim().slice(0, 500) || '请回答图中的问题。';
     await transfers.transfer(payload, progress => {
       if (!current()) return;
       $('shot-progress').hidden = false;
@@ -399,86 +420,60 @@ async function takeScreenshot(region = false) {
   }
 }
 
-function startVoice() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    toast('此浏览器不支持语音识别；请在手机端直接输入问题');
-    return;
-  }
-  if (!state.peer) return toast('请先开启屏幕分享并等待配对');
-  state.voiceBuffer = '';
+async function startVoice() {
+  if (!state.peer || state.peer.phase !== 'connected') return toast('请先等待手机连接成功');
+  if (!window.desktopBridge?.transcribeAudio) return toast('离线转写需要 Windows 桌面程序');
+  if (state.voiceActive) return;
+  const generation = ++state.voiceGeneration, peer = state.peer;
   state.voiceActive = true;
-  state.recognition = new SpeechRecognition();
-  state.recognition.lang = 'zh-CN';
-  state.recognition.continuous = true;
-  state.recognition.interimResults = true;
-  state.recognition.onresult = event => {
-    let interim = '';
-    for (let index = event.resultIndex; index < event.results.length; index += 1) {
-      const part = event.results[index][0]?.transcript || '';
-      if (event.results[index].isFinal) state.voiceBuffer += part;
-      else interim += part;
-    }
-    if (interim) setStatus('desktop', '聆听中：' + interim.slice(0, 45));
-    if (state.voiceBuffer.trim()) {
-      clearTimeout(state.voiceTimer);
-      state.voiceTimer = setTimeout(sendRecognizedQuestion, 900);
-    }
-  };
-  state.recognition.onerror = event => {
-    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-      state.voiceActive = false;
-      toast('麦克风或语音识别权限被拒绝');
-    } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
-      toast('语音识别错误：' + event.error);
-    }
-  };
-  state.recognition.onend = () => {
-    if (state.voiceActive) setTimeout(() => {
-      try { state.recognition?.start(); } catch { /* the browser may still be closing the previous session */ }
-    }, 250);
-  };
   try {
-    state.recognition.start();
+    const status = await window.desktopBridge.speechStatus();
+    if (generation !== state.voiceGeneration) return;
+    if (!status.ready) throw new Error('请先在快捷键设置中下载离线语音组件');
+    const tracks = state.outgoingStream?.getAudioTracks().filter(track => track.readyState === 'live') || [];
+    if (!tracks.length) throw new Error('没有可用音频，请重新分享并启用所需音频来源');
+    const input = new OfflineVoiceInput({
+      transcribe: pcm => window.desktopBridge.transcribeAudio(pcm),
+      onText: text => { if (generation === state.voiceGeneration && state.peer === peer) void sendDesktopQuestion(text); },
+      onStatus: text => { if (generation === state.voiceGeneration) toast(text); },
+      onError: error => { if (generation === state.voiceGeneration) { stopVoice(false); toast(error.message || '离线转写失败'); } },
+    });
+    state.voiceInput = input;
+    await input.start(tracks);
+    if (generation !== state.voiceGeneration) { await input.stop(); return; }
     $('toggle-voice').classList.add('listening');
-    $('toggle-voice').firstChild.textContent = '● 正在聆听 ';
-    toast('开始语音识别，请说出问题；再次按快捷键结束');
-  } catch (error) {
-    state.voiceActive = false;
-    toast('无法启动语音识别：' + error.message);
-  }
+    $('toggle-voice').firstChild.textContent = '● 停止离线语音 ';
+    toast('本机离线转写中');
+    void peer.send({ type: 'notice', text: $('meeting-mode').value === 'one-to-one' ? '系统声音离线转写已开启，问题会持续自动提交。' : '麦克风与系统声音离线转写已开启，问题会自动提交。' }).catch(() => {});
+  } catch (error) { if (generation === state.voiceGeneration) { stopVoice(false); toast(error.message); } }
 }
-function stopVoice(sendRemainder = true) {
-  state.voiceActive = false;
-  clearTimeout(state.voiceTimer);
-  try { state.recognition?.stop(); } catch { /* already stopped */ }
-  state.recognition = null;
+function stopVoice() {
+  const wasActive = state.voiceActive;
+  state.voiceGeneration += 1; state.voiceActive = false;
+  const input = state.voiceInput; state.voiceInput = null;
+  void input?.stop().catch(() => {});
+  void window.desktopBridge?.cancelTranscription?.().catch(() => {});
   $('toggle-voice').classList.remove('listening');
-  $('toggle-voice').firstChild.textContent = '◖ 语音提问 ';
-  if (sendRemainder) sendRecognizedQuestion();
+  $('toggle-voice').firstChild.textContent = '◖ 离线语音输入 ';
+  if (wasActive && state.peer?.phase === 'connected') void state.peer.send({ type: 'notice', text: '语音输入已停止，未完成的转写已取消。' }).catch(() => {});
 }
-async function sendRecognizedQuestion() {
-  clearTimeout(state.voiceTimer);
-  const text = state.voiceBuffer.trim();
-  state.voiceBuffer = '';
+async function sendDesktopQuestion(value) {
+  const text = String(value || '').trim().slice(0, 12000);
   if (!text) return;
+  if (state.peer?.phase !== 'connected') return toast('手机尚未连接，本条问题未发送');
   try {
-    await state.peer.send({ type: 'request', text, at: Date.now() });
+    await state.peer.send({ type: 'request', text, autoAsk: true, at: Date.now() });
     $('desktop-question-empty').hidden = true;
-    $('desktop-question').hidden = false;
-    $('desktop-question').textContent = text;
-    state.requestCount += 1;
-    $('request-count').textContent = String(state.requestCount);
-    setStatus('desktop', '语音问题已发送');
-  } catch (error) { toast(error.message); }
+    $('desktop-question').hidden = false; $('desktop-question').textContent = text;
+    $('request-count').textContent = String(++state.requestCount);
+    toast('问题已投送手机');
+    return true;
+  } catch (error) { toast(error.message); return false; }
 }
 
 function handleDesktopMessage(message) {
   if (message.type === 'screenshot-ack') { state.screenshotTransfers?.acknowledge(message); return; }
-  if (message.type === 'answer') {
-    $('desktop-answer').textContent = String(message.text || '');
-    toast('手机端 AI 回复已同步');
-  }
+  // Responses belong on the phone, including when connected to an older peer.
   if (message.type === 'control-state') toast('手机自动回答已' + (message.enabled ? '开启' : '关闭'));
 }
 function attachRemoteStream(stream) {
@@ -513,7 +508,7 @@ function addChatMessage(kind, text, image = '') {
     item.append(body);
   }
   $('message-list').append(item);
-  $('message-list').scrollTop = $('message-list').scrollHeight;
+  if (!state.manualReading) $('message-list').scrollTop = $('message-list').scrollHeight;
   return item;
 }
 function setLatestImage(image) {
@@ -523,6 +518,13 @@ function setLatestImage(image) {
   $('attachment-strip').hidden = false;
 }
 async function handleMobileMessage(message) {
+  if (message.type === 'notice') { addChatMessage('system', String(message.text || '').slice(0, 500)); return; }
+  if (message.type === 'control' && ['scroll-up', 'scroll-down'].includes(message.action)) {
+    navigatePage('mobile', 'chat');
+    state.manualReading = true;
+    $('message-list').scrollBy({ top: (message.action === 'scroll-up' ? -1 : 1) * $('message-list').clientHeight * 0.65, behavior: 'auto' });
+    return;
+  }
   if (message.type === 'control' && message.action === 'toggle-auto-answer') {
     $('auto-answer').checked = !$('auto-answer').checked;
     await state.peer.send({ type: 'control-state', enabled: $('auto-answer').checked });
@@ -541,16 +543,19 @@ async function handleMobileMessage(message) {
     } finally { state.screenshotReceivers.delete(controller); }
     if (!current()) return;
     setLatestImage(message.image);
-    addChatMessage('incoming', '收到桌面截图', message.image);
+    addChatMessage('incoming', typeof message.question === 'string' ? '截图提问 · ' + message.question.slice(0, 500) : '收到桌面截图', message.image);
     if (validScreenshotId(message.id)) await peer?.send({ type: 'screenshot-ack', id: message.id, status: 'received' }).catch(() => {});
     if (!current()) return;
-    if ($('auto-answer').checked) submitQuestion('请分析这张桌面截图中的问题，并给出简洁、准确的建议。', message.image);
+    navigatePage('mobile', 'chat');
+    if (typeof message.question === 'string' && message.question.trim()) submitQuestion(message.question.slice(0, 500), message.image);
+    else if ($('auto-answer').checked) submitQuestion('请分析这张桌面截图中的问题，并给出简洁、准确的建议。', message.image);
     return;
   }
   if (message.type === 'request') {
     const text = String(message.text || '').slice(0, 12000);
     addChatMessage('incoming', text);
-    if ($('auto-answer').checked) submitQuestion(text, state.latestImage);
+    navigatePage('mobile', 'chat');
+    if (message.autoAsk === true || $('auto-answer').checked) submitQuestion(text, '');
     return;
   }
 }
@@ -562,7 +567,7 @@ async function submitQuestion(question, image = state.latestImage) {
   const key = $('llm-key').value;
   const endpoint = $('llm-endpoint').value.trim();
   const model = $('llm-model').value.trim();
-  if (!key.trim()) {
+    if (!key.trim()) {
     addChatMessage('system', '请先填写 API Key，再提交问题。Key 仅保存在当前页面内存。');
     $('llm-key').focus();
     return;
@@ -595,7 +600,7 @@ async function submitQuestion(question, image = state.latestImage) {
             pending.append(label, answerBody);
           }
           answerBody.textContent = text;
-          $('message-list').scrollTop = $('message-list').scrollHeight;
+          if (!state.manualReading) $('message-list').scrollTop = $('message-list').scrollHeight;
         },
       });
       if (!current()) return;
@@ -604,9 +609,6 @@ async function submitQuestion(question, image = state.latestImage) {
       state.lastAnswer = answer;
       state.chatHistory.push({ role: 'user', content: actualQuestion }, { role: 'assistant', content: answer });
       state.chatHistory = state.chatHistory.slice(-8);
-      if (peer) {
-        try { await peer.send({ type: 'answer', text: answer, at: Date.now() }); } catch { /* showing it on the phone is still useful */ }
-      }
     } catch (error) {
       pending.remove();
       if (current() && !controller.signal.aborted) {
@@ -625,6 +627,86 @@ async function submitQuestion(question, image = state.latestImage) {
   state.modelQueue = request;
   return request;
 }
+
+function navigatePage(role, page) {
+  const pages = role === 'desktop' ? ['pair', 'source', 'keys'] : ['pair', 'api', 'chat'];
+  if (!pages.includes(page)) return;
+  state.pages[role] = page;
+  $('app-shell')?.classList.toggle('reading-mode', state.role === 'mobile' && page === 'chat');
+  for (const key of pages) {
+    $(role + '-' + key + '-page').hidden = key !== page;
+    const button = $(role + '-nav-' + key);
+    if (key === page) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  }
+}
+
+function renderShortcutSettings() {
+  for (const action of Object.keys(DEFAULT_SHORTCUTS)) $('key-' + action).value = state.shortcuts[action];
+  $('shortcuts-enabled').checked = state.shortcutsEnabled;
+}
+async function syncShortcuts(save = false) {
+  try {
+    const result = await window.desktopBridge?.configureShortcuts?.({ bindings: state.shortcuts, enabled: state.shortcutsEnabled, active: Boolean(state.displayStream) && state.role === 'desktop', save });
+    if (result) { state.shortcuts = result.bindings; state.shortcutsEnabled = result.enabled; }
+    $('shortcut-status').textContent = state.shortcutsEnabled
+      ? (state.displayStream ? '快捷键已启用；方向键用于手机阅读。' : '已启用，开始分享后占用按键，结束后释放。') : '快捷键未启用，不占用其他程序按键。';
+    if (save && !window.desktopBridge) localStorage.setItem('pairo.shortcuts.v1', JSON.stringify({ bindings: state.shortcuts, enabled: state.shortcutsEnabled }));
+    return true;
+  } catch (error) {
+    const previous = await window.desktopBridge?.getShortcuts?.().catch(() => null);
+    if (previous) { state.shortcuts = previous.bindings; state.shortcutsEnabled = previous.enabled; }
+    renderShortcutSettings(); $('shortcut-status').textContent = error.message || '快捷键注册失败';
+    return false;
+  }
+}
+async function loadWorkspaceSettings() {
+  try {
+    const saved = window.desktopBridge?.getShortcuts ? await window.desktopBridge.getShortcuts() : JSON.parse(localStorage.getItem('pairo.shortcuts.v1') || 'null');
+    if (saved) { state.shortcuts = validateShortcuts(saved.bindings); state.shortcutsEnabled = saved.enabled === true; }
+    renderShortcutSettings();
+    const speech = await window.desktopBridge?.speechStatus?.();
+    $('speech-status').textContent = speech?.ready ? '离线组件已就绪 · 本机转写' : '首次需下载引擎和模型（约 80 MB）';
+  } catch { $('shortcut-status').textContent = '设置读取失败，当前使用默认按键；请重新保存。'; }
+}
+for (const [role, pages] of Object.entries({ desktop: ['pair', 'source', 'keys'], mobile: ['pair', 'api', 'chat'] })) {
+  for (const page of pages) $(role + '-nav-' + page).addEventListener('click', () => navigatePage(role, page));
+}
+$('shortcut-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    state.shortcuts = validateShortcuts(Object.fromEntries(Object.keys(DEFAULT_SHORTCUTS).map(action => [action, $('key-' + action).value])));
+    await syncShortcuts(true);
+  } catch (error) { $('shortcut-status').textContent = error.message; }
+});
+$('reset-shortcuts').addEventListener('click', async () => { state.shortcuts = { ...DEFAULT_SHORTCUTS }; renderShortcutSettings(); await syncShortcuts(true); });
+$('shortcuts-enabled').addEventListener('change', async () => { state.shortcutsEnabled = $('shortcuts-enabled').checked; await syncShortcuts(true); });
+$('background-mode').addEventListener('click', async () => {
+  if (!window.desktopBridge?.hideToTray) return toast('后台托盘仅在 Windows 程序中可用');
+  try { await window.desktopBridge.hideToTray(); } catch (error) { toast(error.message); }
+});
+$('meeting-mode').addEventListener('change', () => {
+  const single = $('meeting-mode').value === 'one-to-one';
+  $('capture-mic').checked = !single; $('capture-mic').disabled = single;
+  $('capture-system-audio').checked = true; $('capture-system-audio').disabled = single;
+});
+$('install-speech').addEventListener('click', async () => {
+  if (!window.desktopBridge?.installSpeech) { $('speech-status').textContent = '请在 Windows 桌面程序中下载离线组件'; return; }
+  $('install-speech').disabled = true; $('speech-status').textContent = '下载中，请稍候；完成前不能启动转写…';
+  try { await window.desktopBridge.installSpeech(); $('speech-status').textContent = '离线组件已就绪 · 本机转写'; }
+  catch (error) { $('speech-status').textContent = error.message || '下载失败，可稍后重试'; }
+  finally { $('install-speech').disabled = false; }
+});
+$('desktop-composer').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (state.textInput && await sendDesktopQuestion($('desktop-text').value)) $('desktop-text').value = '';
+});
+$('message-list').addEventListener('scroll', () => {
+  const list = $('message-list');
+  state.manualReading = list.scrollHeight - list.clientHeight - list.scrollTop > 40;
+});
+$('live-monitor').addEventListener('toggle', () => { if (!$('live-monitor').open) $('remote-audio').pause(); });
+void loadWorkspaceSettings();
 
 $('desktop-tab').addEventListener('click', () => setRole('desktop'));
 $('mobile-tab').addEventListener('click', () => setRole('mobile'));
@@ -696,6 +778,7 @@ $('reconnect-room').addEventListener('click', () => state.peer?.reconnect());
 $('reconnect-desktop').addEventListener('click', () => state.peer?.reconnect());
 $('enable-audio').addEventListener('click', async () => {
   try {
+    $('remote-audio').muted = false;
     await $('remote-audio').play();
     $('media-hint').textContent = '音频播放中';
     toast('已开启桌面音频');
@@ -778,13 +861,6 @@ $('copy-diagnostics').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText($('diagnostics-text').value); toast('诊断信息已复制，可附在问题描述中'); }
   catch { $('diagnostics-text').focus(); $('diagnostics-text').select(); toast('请手动复制已选中的诊断信息'); }
 });
-$('speak-answer').addEventListener('click', () => {
-  if (!state.lastAnswer || !('speechSynthesis' in window)) return toast('当前没有可朗读的答复');
-  speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(state.lastAnswer);
-  utterance.lang = 'zh-CN';
-  speechSynthesis.speak(utterance);
-});
 for (const id of ['mobile-signal', 'llm-endpoint', 'llm-model']) $(id).addEventListener('change', savePreferences);
 $('mobile-signal').addEventListener('input', savePreferences);
 $('mobile-signal').value = saved.signalBase || defaultBase;
@@ -796,21 +872,22 @@ $('desktop-signal').addEventListener('change', () => { savePreferences(); void r
 $('desktop-signal').addEventListener('input', savePreferences);
 
 function handleDesktopKeydown(event) {
-  if (state.role !== 'desktop' || event.repeat || !event.altKey || !event.shiftKey) return;
+  if (state.role !== 'desktop' || event.repeat || !state.shortcutsEnabled || !state.displayStream || event.isComposing) return;
   const target = event.target;
   if (target instanceof HTMLElement && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
-  const key = event.key.toLowerCase();
-  if (key === 's') dispatchDesktopHotkey('screenshot');
-  if (key === 'm') dispatchDesktopHotkey('voice');
-  if (key === 'a') dispatchDesktopHotkey('auto-answer');
+  const action = shortcutForEvent(event, state.shortcuts);
+  if (action) { event.preventDefault(); void dispatchDesktopHotkey(action); }
 }
-if (window.desktopBridge) window.desktopBridge.onShortcut(dispatchDesktopHotkey);
-else document.addEventListener('keydown', handleDesktopKeydown);
+if (window.desktopBridge) {
+  window.desktopBridge.onShortcut(dispatchDesktopHotkey);
+  window.desktopBridge.onShortcutError?.(message => { $('shortcut-status').textContent = message; toast(message); });
+}
+document.addEventListener('keydown', handleDesktopKeydown);
 if (initialRole !== state.role) setRole(initialRole);
 window.addEventListener('beforeunload', () => {
   state.configController?.abort();
   resetConversation();
   state.peer?.disconnect();
   state.outgoingStream?.getTracks().forEach(track => track.stop());
-  try { state.recognition?.stop(); } catch { /* closing */ }
+  stopVoice(false);
 });

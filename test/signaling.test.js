@@ -4,6 +4,7 @@ import { WebSocket } from 'ws';
 import { once } from 'node:events';
 import { request } from 'node:http';
 import { createSignalingServer } from '../server/signaling.js';
+import { PROTOCOL_VERSION } from '../src/protocol.js';
 
 function nextJson(socket, timeout = 1500) {
   return new Promise((resolve, reject) => {
@@ -43,10 +44,10 @@ async function fixture(t, options = {}) {
 test('relays negotiation messages only between one desktop and one phone', async t => {
   const fx = await fixture(t);
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, room: 'ABCD2345', role: 'desktop' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, room: 'ABCD2345', role: 'desktop' }));
   assert.equal((await nextJson(desktop)).type, 'joined');
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, room: 'ABCD2345', role: 'mobile' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, room: 'ABCD2345', role: 'mobile' }));
   assert.equal((await nextJson(phone)).peerPresent, true);
   assert.equal((await nextJson(desktop)).type, 'peer-joined');
   const offer = { type: 'offer', payload: { type: 'offer', sdp: 'v=0' } };
@@ -60,13 +61,13 @@ test('relays negotiation messages only between one desktop and one phone', async
 test('rejects duplicate roles and frees rooms when peers leave', async t => {
   const fx = await fixture(t);
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, room: 'ROOM2345', role: 'desktop' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, room: 'ROOM2345', role: 'desktop' }));
   await nextJson(desktop);
   const duplicate = await fx.connect();
-  duplicate.send(JSON.stringify({ type: 'join', protocolVersion: 2, room: 'ROOM2345', role: 'desktop' }));
+  duplicate.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, room: 'ROOM2345', role: 'desktop' }));
   assert.equal((await nextJson(duplicate)).type, 'error');
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, room: 'ROOM2345', role: 'mobile' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, room: 'ROOM2345', role: 'mobile' }));
   await nextJson(phone);
   await nextJson(desktop);
   phone.close();
@@ -93,7 +94,7 @@ test('rejects JSON primitives and invalid negotiation without killing the servic
     socket.send(JSON.stringify(value));
     assert.equal((await response).type, 'error');
   }
-  socket.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345' }));
+  socket.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345' }));
   await nextJson(socket);
   for (const message of [
     { type: 'offer', payload: [] },
@@ -110,14 +111,14 @@ test('rejects JSON primitives and invalid negotiation without killing the servic
 test('an oversized websocket frame closes only its sender', async t => {
   const fx = await fixture(t);
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345' }));
   await nextJson(desktop);
   const attacker = await fx.connect();
   const closed = once(attacker, 'close');
   attacker.send('x'.repeat(256 * 1024 + 1));
   await closed;
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
   assert.equal((await nextJson(phone)).peerPresent, true);
   await nextJson(desktop);
   desktop.send(JSON.stringify({ type: 'offer', payload: { type: 'offer', sdp: 'v=0' } }));
@@ -132,10 +133,10 @@ test('rejects legacy/incompatible protocol before joining and relays media resta
   assert.match((await rejected).message, /版本不兼容/);
   assert.equal(fx.service.rooms.size, 0);
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345' }));
   await nextJson(desktop);
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
   await nextJson(phone); await nextJson(desktop);
   phone.send(JSON.stringify({ type: 'restart', payload: { private: 'must not be relayed' } }));
   assert.deepEqual(await nextJson(desktop), { type: 'restart', from: 'mobile' });
@@ -144,10 +145,10 @@ test('rejects legacy/incompatible protocol before joining and relays media resta
 test('desktop approval gates negotiation and the same phone can reconnect without another prompt', async t => {
   const fx = await fixture(t);
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345', requireApproval: true }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345', requireApproval: true }));
   await nextJson(desktop);
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
   assert.equal((await nextJson(phone)).approvalRequired, true);
   assert.equal((await nextJson(desktop)).approvalRequired, true);
   desktop.send(JSON.stringify({ type: 'offer', payload: { type: 'offer', sdp: 'v=0' } }));
@@ -159,12 +160,12 @@ test('desktop approval gates negotiation and the same phone can reconnect withou
   assert.equal(typeof token, 'string');
   phone.close(); await nextJson(desktop);
   const returning = await fx.connect();
-  returning.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345', reconnectToken: token }));
+  returning.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345', reconnectToken: token }));
   assert.equal((await nextJson(returning)).approvalRequired, false);
   await nextJson(desktop);
   returning.close(); await nextJson(desktop);
   const stranger = await fx.connect();
-  stranger.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345' }));
+  stranger.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
   assert.equal((await nextJson(stranger)).approvalRequired, true);
   await nextJson(desktop);
   desktop.send(JSON.stringify({ type: 'approve', allow: false }));
@@ -174,11 +175,11 @@ test('desktop approval gates negotiation and the same phone can reconnect withou
 test('connection and room limits reject excess clients and idle sockets expire', async t => {
   const fx = await fixture(t, { maxConnections: 2, maxConnectionsPerIp: 2, maxRooms: 1, heartbeatMs: 10, unjoinedTimeoutMs: 60, waitingTimeoutMs: 1000 });
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345' }));
   await nextJson(desktop);
   const extra = await fx.connect();
   await assert.rejects(fx.connect(), /429/);
-  extra.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'MORE2345' }));
+  extra.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'MORE2345' }));
   assert.match((await nextJson(extra)).message, /房间数量/);
   await once(extra, 'close');
   const idle = await fx.connect();
@@ -204,10 +205,10 @@ test('heartbeat removes nonresponsive peers while an active pair is not subject 
   await once(dead, 'open');
   await once(dead, 'close');
   const desktop = await fx.connect();
-  desktop.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'desktop', room: 'SAFE2345' }));
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345' }));
   await nextJson(desktop);
   const phone = await fx.connect();
-  phone.send(JSON.stringify({ type: 'join', protocolVersion: 2, role: 'mobile', room: 'SAFE2345' }));
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
   await nextJson(phone); await nextJson(desktop);
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(desktop.readyState, WebSocket.OPEN);
