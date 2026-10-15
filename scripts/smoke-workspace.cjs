@@ -73,10 +73,11 @@ app.whenReady().then(async () => {
     await snapshot(phone, 'mobile-' + page);
   }
   const layout = await evaluate(phone, `(()=>{const list=document.getElementById('message-list').getBoundingClientRect(),composer=document.getElementById('composer').getBoundingClientRect();if(list.height<innerHeight*.50||composer.height>60)throw new Error('Chat does not prioritize reading: '+JSON.stringify({list:list.height,composer:composer.height,viewport:innerHeight}));return {chatHeight:Math.round(list.height),composerHeight:Math.round(composer.height),viewportHeight:innerHeight};})()`);
+  const safeAreas = await evaluate(phone, `(()=>{const root=document.documentElement;try{root.style.setProperty('--safe-area-inset-top','24px');root.style.setProperty('--safe-area-inset-bottom','16px');const title=document.querySelector('.topbar').getBoundingClientRect(),nav=document.querySelector('#mobile-view .bottom-nav').getBoundingClientRect();if(title.top<24||nav.bottom>innerHeight-15)throw new Error('System bars overlap the workspace');return true;}finally{root.style.removeProperty('--safe-area-inset-top');root.style.removeProperty('--safe-area-inset-bottom');}})()`);
   // Loading the production worklet is part of the check; this catches build URL/CSP failures.
   const worklet = await evaluate(desktop, `(async()=>{const ctx=new AudioContext({sampleRate:16000});const source=await fetch('/').then(r=>r.text());const entry=source.match(/src="([^\"]+assets[^\"]+\.js)"/)[1];const bundle=await fetch(entry).then(r=>r.text());const uri=bundle.match(new RegExp('data:(?:text|application)/javascript;base64,[A-Za-z0-9+/=]+'))?.[0];if(!uri)throw new Error('Production worklet missing');await ctx.audioWorklet.addModule(uri);const processor=new AudioWorkletNode(ctx,'pairo-voice-chunks');processor.disconnect();await ctx.close();return true;})()`);
-  console.log(JSON.stringify({ ...checks, navigationKeepsRoom: true, portraitFits: true, desktopSilent: true, productionWorklet: worklet, ...layout, consoleErrors: errors }));
-  await fs.writeFile(path.join(output, 'workspace-result.json'), JSON.stringify({ ...checks, layout, errors }, null, 2));
+  console.log(JSON.stringify({ ...checks, navigationKeepsRoom: true, portraitFits: true, systemBarInsets: safeAreas, desktopSilent: true, productionWorklet: worklet, ...layout, consoleErrors: errors }));
+  await fs.writeFile(path.join(output, 'workspace-result.json'), JSON.stringify({ ...checks, systemBarInsets: safeAreas, layout, errors }, null, 2));
   clearTimeout(deadline); desktop.destroy(); phone.destroy();
   for (const socket of signaling.wss.clients) socket.terminate();
   signaling.wss.close(); signaling.server.close(); ui.close(); app.exit(errors.length ? 1 : 0);

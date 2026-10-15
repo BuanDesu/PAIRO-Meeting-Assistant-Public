@@ -13,3 +13,11 @@ main{flex:1;min-height:0;display:flex}.role-view{width:100%;min-height:0;display
 @media(max-width:700px){.reading-mode .app-footer{display:none}.reading-mode .topbar{height:52px}.reading-mode .conversation-panel>.panel-heading{min-height:34px;margin-bottom:7px}.reading-mode .attachment-strip{padding:3px 6px}.reading-mode .attachment-strip img{height:22px;width:30px}.reading-mode .attachment-strip .icon-button{min-height:25px;height:25px}.reading-mode .composer-foot{display:none}}
 
 @media(max-width:700px){.chat-message.incoming img{max-height:105px}}
+
+/* Android edge-to-edge WebViews expose insets through Capacitor CSS variables.
+   Reserve the space outside the header/navigation instead of squeezing their content. */
+@media(max-width:700px){
+  .app-shell{padding:var(--safe-area-inset-top,env(safe-area-inset-top,0px)) var(--safe-area-inset-right,env(safe-area-inset-right,0px)) var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px)) var(--safe-area-inset-left,env(safe-area-inset-left,0px))}
+  .topbar{padding-top:6px}
+  .bottom-nav{padding-bottom:5px}
+}
