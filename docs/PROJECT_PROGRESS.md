@@ -1,12 +1,12 @@
 # 项目进度
 
-最后更新：2026-10-14。
+最后更新：2026-10-15。
 
-当前开发分支准备 0.3.0 XP 工作台，Android 升级编号 3001、协议 3；三页导航、手机竖屏聊天室、可配置 Num1/Num2/Num3/↑/↓、静默托盘、本机双音源离线转写与一对一系统音频模式均已实现。EXE、ZIP 和固定正式签名 APK 候选已构建并校验，尚未发布或替换 0.2.0。用户外出期间只做隐藏模拟窗口与生成媒体验收，不连接手机；新 APK 覆盖升级和实际触控、真实声音短流程仍待确认。见 [本轮 TODO](XP_WORKSPACE_TODO.md) 与 [检查证据](XP_WORKSPACE_VALIDATION.md)。
+0.3.0 XP 工作台已完成，Android 升级编号 3001、协议 3；三页导航、手机竖屏聊天室、可配置 Num1/Num2/Num3/↑/↓、静默托盘、本机双音源离线转写与一对一系统音频模式均已实现。新 APK 覆盖升级保留设置，实际触控、键盘与五项快捷键短流程通过；中文转写统一为简体，一对一实际系统音频转写与手机自动回答通过，麦克风请求为 0。最终代码 d3d4bda 的 Windows/Linux/Android CI 全部通过，用户已授权合并 [PR #3](https://github.com/BuanDesu/p2p-meeting-copilot/pull/3) 并发布。EXE、ZIP、正式签名 APK 和校验文件由版本标签工作流发布，结果见 [v0.3.0](https://github.com/BuanDesu/p2p-meeting-copilot/releases/tag/v0.3.0)。旧版附件保持原样。见 [本轮 TODO](XP_WORKSPACE_TODO.md) 与 [检查证据](XP_WORKSPACE_VALIDATION.md)。
 
 以下保留 0.2.0 已发布版本的真实设备记录。
 
-已发布版本为 0.2.0，Android 升级编号 2001、协议版本 2，最低 Android 8，两端需同时更新。下载与当前发布状态见 [Releases](https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest)；提供 Windows EXE、目录 ZIP、固定正式签名 APK 与三份文件的 SHA-256。
+0.2.0 的 Android 升级编号为 2001、协议版本 2，最低 Android 8，两端需同时更新。历史下载见 [v0.2.0](https://github.com/BuanDesu/p2p-meeting-copilot/releases/tag/v0.2.0)；提供 Windows EXE、目录 ZIP、固定正式签名 APK 与三份文件的 SHA-256。
 
 [PR #2](https://github.com/BuanDesu/p2p-meeting-copilot/pull/2) 包含这批改进。最终 EXE、目录 ZIP 和正式 APK 已构建，APK v2 签名与版本校验通过；固定签名迁移和 2000 → 2001 覆盖升级通过。README 提供普通用户的下载、安装、扫码、模型设置与更新指南。
 

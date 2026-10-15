@@ -37,7 +37,7 @@
 
 ## 本地候选包
 
-`release/v0.3.0-candidate/` 包含 EXE、目录 ZIP、APK 和 SHA256SUMS.txt，未上传发布。Windows 没有代码签名证书。
+`release/v0.3.0-candidate/` 包含发布前本机验证的 EXE、目录 ZIP、APK 和 SHA256SUMS.txt。以下为本地候选摘要；正式标签工作流重新构建的附件摘要以发布页 SHA256SUMS.txt 为准。Windows 没有代码签名证书。
 
 ```text
 APK  ac91b6f7833910281e78128fb4d095fe1815fa6e958a053bc996581a05569c58
@@ -50,7 +50,7 @@ Android 证书 SHA-256 延续 `b9ccb30df1c5cfec3e0f2eb6baffe57fe01ee13d045dfea86
 ## 保留范围
 
 - 新界面与快捷键真机短流程已通过；没有重做行为未改变的一小时、锁屏与断线恢复检查。嘈杂现场的识别精度没有量化，tiny 模型仍保留精度限制说明。
-- 旧清单中的另一网络／多活动网卡、Windows 证书保持未完成。最新正式发布仍是 v0.2.0，候选不会覆盖旧附件。
+- 旧清单中的另一网络／多活动网卡、Windows 证书保持未完成。用户已授权发布 v0.3.0，v0.2.0 附件保持原样。
 
 离线组件来源：固定 [whisper.cpp v1.8.3](https://github.com/ggml-org/whisper.cpp/releases/tag/v1.8.3) 的 CPU ZIP（SHA-256 来自官方附件摘要），[ggerganov/whisper.cpp 模型仓库](https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1) 的 tiny 多语言模型（固定修订与 LFS SHA-256）；与应用一同记录固定下载来源，不使用浮动最新版。
 

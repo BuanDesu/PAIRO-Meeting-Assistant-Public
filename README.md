@@ -4,7 +4,16 @@
 
 需要 Windows 10 / 11 的 64 位电脑、Android 8 或更新版本的手机，以及同一个可信局域网。电脑也可以连接手机热点。使用 AI 时，请在手机里填写自己的服务地址、模型名称和 API Key。
 
-**源码正在准备 0.3.0 XP 工作台改版，尚未发布。** 最新已发布版仍是 [v0.2.0](https://github.com/BuanDesu/p2p-meeting-copilot/releases/tag/v0.2.0)，界面不同，安装和使用方法见 [0.2.0 指南](docs/USAGE_v0.2.0.md)。发布页 Assets 提供 EXE、目录 ZIP、正式签名 APK 和校验文件，普通用户不用安装编程工具。私有仓库需要登录有访问权限的 GitHub 账号。
+**当前版本：0.3.0 · XP 会议工作台。** 普通用户直接下载下面的程序，无需安装编程工具。私有仓库需要先登录有访问权限的 GitHub 账号。
+
+| 设备 / 用途 | 下载 |
+| --- | --- |
+| Windows 10/11 64 位，一份文件直接运行 | [下载 EXE](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-win-x64.exe) |
+| Windows，完整解压后使用，后续打开更快 | [下载目录 ZIP](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-win-x64-folder.zip) |
+| Android 8 或更新版本 | [下载正式签名 APK](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-android.apk) |
+| 查看更新内容 / 核对文件完整性 | [发布说明](https://github.com/BuanDesu/p2p-meeting-copilot/releases/tag/v0.3.0) · [SHA-256 校验文件](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.3.0/SHA256SUMS.txt) |
+
+正式签名 v0.2.0 APK 可直接覆盖更新，地址和模型设置保留；API Key 仅在会话内存中，重新打开应用后需填写。旧版界面说明保留在 [0.2.0 指南](docs/USAGE_v0.2.0.md)。发布页底部的 Source code 是源码，运行程序请选择上表附件。
 
 以下指南对应 **0.3.0 改版**，两端必须同时更新，旧版无法与新版配对。Windows 目前没有代码签名证书；Android 延续固定正式签名。
 
