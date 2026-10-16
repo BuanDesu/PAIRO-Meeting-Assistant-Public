@@ -11,6 +11,7 @@ const { lanAddresses } = require('./network.cjs');
 const { showCapturePicker } = require('./capture-picker.cjs');
 const { createShortcutManager } = require('./shortcuts.cjs');
 const { createOfflineSpeech } = require('./offline-speech.cjs');
+const { DEFAULT_TYPING, validateTyping, createTextAutomation } = require('./text-automation.cjs');
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || (app.isPackaged ? path.dirname(app.getPath('exe')) : '');
 if (portableDir) {
@@ -31,6 +32,7 @@ let registeredShortcuts = [];
 let preferencesStore;
 let shortcutManager, offlineSpeech, tray, quitting = false, meetingActive = false;
 let shortcutWrites = Promise.resolve();
+let textAutomation, typingSettings = { ...DEFAULT_TYPING }, typingSettingsWrites = Promise.resolve();
 const uiOrigin = () => uiPort ? 'http://127.0.0.1:' + uiPort : '';
 function trustedContents(contents, details = {}) {
   return Boolean(mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents
@@ -183,6 +185,7 @@ function configureDisplayCapture() {
 function updateGlobalShortcuts(value = {}) {
   // When our window is focused, DOM shortcuts respect editable fields. Global keys are for background use.
   const result = shortcutManager.update({ ...value, active: meetingActive && !mainWindow?.isFocused() });
+  textAutomation?.setBindings({ ...result, active: meetingActive && !mainWindow?.isFocused() });
   registeredShortcuts = result.registered; return result;
 }
 function restoreWindow() {
@@ -227,7 +230,7 @@ async function createWindow() {
     try { updateGlobalShortcuts(); }
     catch (error) { mainWindow?.webContents.send('desktop-shortcut-error', error.message); }
   });
-  mainWindow.webContents.on('render-process-gone', () => { meetingActive = false; shortcutManager.clear(); offlineSpeech.cancel(); });
+  mainWindow.webContents.on('render-process-gone', () => { meetingActive = false; shortcutManager.clear(); offlineSpeech.cancel(); textAutomation?.cancel(); textAutomation?.setBindings({ enabled: false }); });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUiUrl(url, uiOrigin())) event.preventDefault();
@@ -260,11 +263,37 @@ ipcMain.handle('desktop:open-releases', event => {
 });
 ipcMain.handle('desktop:hide-to-tray', event => { requireTrustedIpc(event); mainWindow.hide(); });
 ipcMain.handle('desktop:shortcuts-read', event => { requireTrustedIpc(event); return shortcutManager.snapshot(); });
+function requireTextSession(event) {
+  requireTrustedIpc(event);
+  if (!meetingActive || !shortcutManager.snapshot().enabled) throw new Error('请先连接手机并启用快捷键');
+  // Never send synthetic input back into PAIRO itself.
+  if (mainWindow.isFocused()) throw new Error('请在需要操作的其他程序中使用快捷键');
+}
+ipcMain.handle('desktop:copy-selection', event => { requireTextSession(event); return textAutomation.copySelection(); });
+ipcMain.handle('desktop:typing-prepare', event => {
+  requireTextSession(event);
+  if (textAutomation.active) { textAutomation.cancel(); return null; }
+  return textAutomation.prepare();
+});
+ipcMain.handle('desktop:typing-start', (event, value) => { requireTextSession(event); return textAutomation.type(value, typingSettings); });
+ipcMain.handle('desktop:typing-cancel', event => { requireTrustedIpc(event); textAutomation.cancel(); });
+ipcMain.handle('desktop:typing-settings-read', event => { requireTrustedIpc(event); return { ...typingSettings }; });
+ipcMain.handle('desktop:typing-settings-write', (event, value) => {
+  requireTrustedIpc(event); const next = validateTyping(value);
+  const write = typingSettingsWrites.catch(() => {}).then(async () => {
+    const file = path.join(app.getPath('userData'), 'typing-settings.json');
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file + '.tmp', JSON.stringify(next), { mode: 0o600 }); await fs.rename(file + '.tmp', file);
+    typingSettings = next; return { ...next };
+  });
+  typingSettingsWrites = write; return write;
+});
 ipcMain.handle('desktop:shortcuts-write', (event, value) => {
   requireTrustedIpc(event);
   if (!value || typeof value !== 'object' || typeof value.active !== 'boolean' || typeof value.enabled !== 'boolean') throw new Error('快捷键状态不正确');
   const update = shortcutWrites.catch(() => {}).then(async () => {
     const oldActive = meetingActive; meetingActive = value.active;
+    if (!meetingActive || !value.enabled) textAutomation?.cancel();
     let result;
     try {
       // Probe while the settings window is focused too, so Save can report conflicts immediately.
@@ -292,6 +321,14 @@ app.whenReady().then(async () => {
   try {
     app.setAppUserModelId('com.pairo.meetingcopilot');
     preferencesStore = createPreferencesStore(app.getPath('userData'));
+    try { typingSettings = validateTyping(JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'typing-settings.json'), 'utf8'))); } catch { /* Use defaults for missing/invalid settings. */ }
+    textAutomation = createTextAutomation({ globalShortcut, onShortcut: action => {
+      if (meetingActive && shortcutManager?.snapshot().enabled && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.webContents.send('desktop-shortcut', action);
+    }, onStatus: value => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-typing-status', value);
+    } });
+    // Start without foreground interaction; an unsupported OS does not prevent other app features.
+    void textAutomation.initialize().catch(() => {});
     const { DEFAULT_SHORTCUTS, validateShortcuts } = await import(pathToFileURL(path.join(app.getAppPath(), 'src', 'shortcuts.js')).href);
     shortcutManager = createShortcutManager({ globalShortcut, defaults: DEFAULT_SHORTCUTS, validate: validateShortcuts,
       dispatch: action => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-shortcut', action); } });
@@ -316,6 +353,7 @@ app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
   quitting = true;
   offlineSpeech?.cancel();
+  textAutomation?.dispose();
   tray?.destroy(); tray = null;
   globalShortcut.unregisterAll();
   signaling?.wss.close();

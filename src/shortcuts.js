@@ -1,10 +1,11 @@
-export const DEFAULT_SHORTCUTS = Object.freeze({ screenshot: 'num1', voice: 'num2', text: 'num3', 'scroll-up': 'Up', 'scroll-down': 'Down' });
+export const DEFAULT_SHORTCUTS = Object.freeze({ screenshot: 'num1', voice: 'num2', text: 'num3', 'type-answer': 'Shift+num3', 'scroll-up': 'Up', 'scroll-down': 'Down' });
 
 export function validateShortcuts(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('快捷键配置格式不正确');
   const result = {}, seen = new Set();
   for (const action of Object.keys(DEFAULT_SHORTCUTS)) {
-    const accelerator = String(value[action] || '').trim();
+    // v0.3.0 saved five actions; only the newly added action may be absent.
+    const accelerator = String(value[action] ?? (action === 'type-answer' ? DEFAULT_SHORTCUTS[action] : '')).trim();
     // Deliberately narrow the supported grammar; never pass arbitrary IPC strings to native APIs.
     if (!/^(?:(?:Control|Ctrl|Alt|Shift|Super|CommandOrControl)\+)*(?:num[0-9]|[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])|Up|Down|Left|Right|Space|Home|End|PageUp|PageDown)$/i.test(accelerator) || accelerator.length > 80) throw new Error('不支持的快捷键：' + accelerator.slice(0, 80));
     const parts = accelerator.toLowerCase().replace(/commandorcontrol|ctrl/g, 'control').split('+');

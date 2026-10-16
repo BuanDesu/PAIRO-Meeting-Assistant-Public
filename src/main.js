@@ -27,7 +27,8 @@ const state = {
   screenshotReceivers: new Set(),
   captureSwitchPending: false,
   pages: { desktop: 'pair', mobile: 'pair' }, shortcuts: { ...DEFAULT_SHORTCUTS }, shortcutsEnabled: false,
-  textInput: false, voiceInput: null, voiceGeneration: 0, manualReading: false,
+  typingRequest: null, typingBusy: false, typingGeneration: 0,
+  voiceInput: null, voiceGeneration: 0, manualReading: false,
 };
 const preferenceKey = 'pairo.preferences.v1';
 const saved = readPreferences();
@@ -59,6 +60,7 @@ function savePreferences() {
 }
 
 function resetConversation() {
+  invalidateTyping();
   state.screenshotGeneration += 1;
   state.screenshotController?.abort();
   state.screenshotController = null;
@@ -96,6 +98,8 @@ function updateModelQueue() {
 }
 
 function cancelModelRequests(showMessage = true) {
+  state.lastAnswer = '';
+  notifyAnswerInvalidated();
   state.modelGeneration += 1;
   for (const controller of state.modelControllers) controller.abort();
   state.modelControllers.clear();
@@ -105,6 +109,9 @@ function cancelModelRequests(showMessage = true) {
   state.modelPending = 0;
   updateModelQueue();
   if (showMessage) addChatMessage('system', '已取消等待。服务商已经接收的请求仍可能计入用量。');
+}
+function notifyAnswerInvalidated() {
+  if (state.role === 'mobile' && state.peer?.phase === 'connected') void state.peer.send({ type: 'answer-invalidated' }).catch(() => {});
 }
 
 function resetMobileMedia() {
@@ -173,6 +180,7 @@ function makePeer(role) {
     role,
     onStatus: message => {
       if (state.peer !== peer) return;
+      if (role === 'desktop' && peer.phase !== 'connected' && state.typingBusy) invalidateTyping();
       if (!peer.awaitingApproval) $('pairing-approval').hidden = true;
       if (role === 'desktop') $('reconnect-desktop').hidden = !['failed', 'disconnected', 'reconnecting'].includes(peer.phase);
       setStatus(role, message, peer.phase === 'connected');
@@ -192,14 +200,48 @@ async function dispatchDesktopHotkey(action) {
   if (action === 'screenshot') void takeScreenshot(false, true);
   if (action === 'voice') state.voiceActive ? stopVoice(true) : startVoice();
   if (action === 'text') {
-    state.textInput = !state.textInput;
-    $('desktop-input-panel').hidden = !state.textInput;
-    if (state.textInput) navigatePage('desktop', 'source');
-    toast(state.textInput ? '文本输入已开启（在主窗口输入）' : '文本输入已关闭');
+    const peer = state.peer, generation = state.typingGeneration;
+    if (peer?.phase !== 'connected') return toast('请先等待手机连接成功');
+    if (!window.desktopBridge?.copySelection) return toast('选中文字需要 Windows 桌面程序');
+    try {
+      const selection = await window.desktopBridge.copySelection();
+      if (peer !== state.peer || generation !== state.typingGeneration || peer.phase !== 'connected') return;
+      await sendDesktopQuestion(selection);
+    } catch (error) { toast(error.message); }
   }
+  if (action === 'type-answer') await requestAnswerTyping();
   if (action === 'scroll-up' || action === 'scroll-down') {
     try { await state.peer.send({ type: 'control', action }); }
     catch (error) { toast(error.message); }
+  }
+}
+
+function invalidateTyping() {
+  state.typingGeneration += 1;
+  clearTimeout(state.typingRequest?.timer);
+  state.typingRequest = null; state.typingBusy = false;
+  void window.desktopBridge?.cancelTyping?.().catch(() => {});
+}
+async function requestAnswerTyping() {
+  if (state.typingBusy) { invalidateTyping(); return toast('已停止回答键入'); }
+  const bridge = window.desktopBridge, peer = state.peer;
+  if (!bridge?.prepareTyping) return toast('回答键入需要 Windows 桌面程序');
+  if (peer?.phase !== 'connected') return toast('请先等待手机连接成功');
+  const generation = ++state.typingGeneration;
+  state.typingBusy = true;
+  try {
+    const token = await bridge.prepareTyping();
+    if (generation !== state.typingGeneration || state.peer !== peer) return;
+    if (!token) { invalidateTyping(); return; }
+    const request = { token, peer, generation, timer: null };
+    state.typingRequest = request;
+    request.timer = setTimeout(() => {
+      if (state.typingRequest !== request) return;
+      invalidateTyping(); toast('手机未返回可键入的回答，请确认两端均已更新');
+    }, 5000);
+    await peer.send({ type: 'answer-request', id: token });
+  } catch (error) {
+    if (generation === state.typingGeneration) { invalidateTyping(); toast(error.message); }
   }
 }
 
@@ -347,7 +389,6 @@ function stopDesktop(showToast = true) {
   $('pairing-approval').hidden = true;
   $('reconnect-desktop').hidden = true;
   state.room = '';
-  state.textInput = false; $('desktop-input-panel').hidden = true; $('desktop-text').value = '';
   void refreshPairingQr();
   setStatus('desktop', '尚未连接');
   if (showToast) toast('桌面分享已停止');
@@ -405,6 +446,7 @@ async function takeScreenshot(region = false, autoAsk = true) {
     let payload;
     try { payload = screenshotPayload(canvas); } finally { canvas.width = 0; canvas.height = 0; }
     if (autoAsk) payload.question = $('screenshot-question').value.trim().slice(0, 500) || '请回答图中的问题。';
+    invalidateTyping();
     await transfers.transfer(payload, progress => {
       if (!current()) return;
       $('shot-progress').hidden = false;
@@ -461,6 +503,7 @@ async function sendDesktopQuestion(value) {
   const text = String(value || '').trim().slice(0, 12000);
   if (!text) return;
   if (state.peer?.phase !== 'connected') return toast('手机尚未连接，本条问题未发送');
+  invalidateTyping();
   try {
     await state.peer.send({ type: 'request', text, autoAsk: true, at: Date.now() });
     $('desktop-question-empty').hidden = true;
@@ -471,9 +514,22 @@ async function sendDesktopQuestion(value) {
   } catch (error) { toast(error.message); return false; }
 }
 
-function handleDesktopMessage(message) {
+async function handleDesktopMessage(message) {
   if (message.type === 'screenshot-ack') { state.screenshotTransfers?.acknowledge(message); return; }
-  // Responses belong on the phone, including when connected to an older peer.
+  if (message.type === 'answer-invalidated') { invalidateTyping(); return; }
+  if (message.type === 'answer-result') {
+    const request = state.typingRequest;
+    if (!request || message.id !== request.token || request.peer !== state.peer || state.peer?.phase !== 'connected' || request.generation !== state.typingGeneration || state.role !== 'desktop') return;
+    clearTimeout(request.timer); state.typingRequest = null;
+    if (message.status !== 'ready' || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 24000) {
+      invalidateTyping(); return toast(message.status === 'busy' ? '手机仍在生成回答，请完成后再按键入快捷键' : '手机没有可键入的完整回答；失败或取消后请重新提问');
+    }
+    try { await window.desktopBridge.typeAnswer({ token: request.token, text: message.text }); }
+    catch (error) { if (request.generation === state.typingGeneration) toast(error.message); }
+    finally { if (request.generation === state.typingGeneration) { state.typingBusy = false; void window.desktopBridge?.cancelTyping?.().catch(() => {}); } }
+    return;
+  }
+  // Answers are never rendered or spoken on the desktop. Only an explicit, matching request may type one.
   if (message.type === 'control-state') toast('手机自动回答已' + (message.enabled ? '开启' : '关闭'));
 }
 function attachRemoteStream(stream) {
@@ -518,6 +574,13 @@ function setLatestImage(image) {
   $('attachment-strip').hidden = false;
 }
 async function handleMobileMessage(message) {
+  if (message.type === 'answer-request') {
+    if (typeof message.id !== 'string' || !/^[a-f0-9]{32}$/.test(message.id)) return;
+    const text = state.lastAnswer;
+    const status = state.modelPending ? 'busy' : text && text.length <= 24000 ? 'ready' : 'empty';
+    await state.peer?.send({ type: 'answer-result', id: message.id, status, ...(status === 'ready' ? { text } : {}) }).catch(() => {});
+    return;
+  }
   if (message.type === 'notice') { addChatMessage('system', String(message.text || '').slice(0, 500)); return; }
   if (message.type === 'control' && ['scroll-up', 'scroll-down'].includes(message.action)) {
     navigatePage('mobile', 'chat');
@@ -532,6 +595,7 @@ async function handleMobileMessage(message) {
     return;
   }
   if (message.type === 'screenshot') {
+    state.lastAnswer = ''; notifyAnswerInvalidated();
     const peer = state.peer, generation = state.screenshotGeneration;
     if (state.screenshotReceivers.size >= 2) return;
     const controller = new AbortController(); state.screenshotReceivers.add(controller);
@@ -564,6 +628,8 @@ async function submitQuestion(question, image = state.latestImage) {
   const text = String(question || '').trim();
   if (!text && !image) return toast('请输入问题或先接收截图');
   const actualQuestion = text || '请分析当前桌面截图中的问题，并给出简洁、准确的建议。';
+  state.lastAnswer = '';
+  notifyAnswerInvalidated();
   const key = $('llm-key').value;
   const endpoint = $('llm-endpoint').value.trim();
   const model = $('llm-model').value.trim();
@@ -612,6 +678,7 @@ async function submitQuestion(question, image = state.latestImage) {
     } catch (error) {
       pending.remove();
       if (current() && !controller.signal.aborted) {
+        state.lastAnswer = '';
         addChatMessage('system', error.message || '模型请求失败');
         state.retryRequest = { question: actualQuestion, image };
       }
@@ -665,6 +732,8 @@ async function loadWorkspaceSettings() {
     const saved = window.desktopBridge?.getShortcuts ? await window.desktopBridge.getShortcuts() : JSON.parse(localStorage.getItem('pairo.shortcuts.v1') || 'null');
     if (saved) { state.shortcuts = validateShortcuts(saved.bindings); state.shortcutsEnabled = saved.enabled === true; }
     renderShortcutSettings();
+    const typing = await window.desktopBridge?.readTypingSettings?.();
+    if (typing) { $('typing-chinese').value = typing.chineseCpm; $('typing-english').value = typing.englishWpm; }
     const speech = await window.desktopBridge?.speechStatus?.();
     $('speech-status').textContent = speech?.ready ? '离线组件已就绪 · 本机转写' : '首次需下载引擎和模型（约 80 MB）';
   } catch { $('shortcut-status').textContent = '设置读取失败，当前使用默认按键；请重新保存。'; }
@@ -697,10 +766,15 @@ $('install-speech').addEventListener('click', async () => {
   catch (error) { $('speech-status').textContent = error.message || '下载失败，可稍后重试'; }
   finally { $('install-speech').disabled = false; }
 });
-$('desktop-composer').addEventListener('submit', async event => {
+$('typing-settings-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (state.textInput && await sendDesktopQuestion($('desktop-text').value)) $('desktop-text').value = '';
+  if (!window.desktopBridge?.saveTypingSettings) { $('typing-settings-status').textContent = '请使用 Windows 桌面程序'; return; }
+  try {
+    await window.desktopBridge.saveTypingSettings({ chineseCpm: Number($('typing-chinese').value), englishWpm: Number($('typing-english').value) });
+    $('typing-settings-status').textContent = '速度已保存，下次键入时使用';
+  } catch (error) { $('typing-settings-status').textContent = error.message; }
 });
+$('stop-typing').addEventListener('click', () => { invalidateTyping(); toast('已停止回答键入'); });
 $('message-list').addEventListener('scroll', () => {
   const list = $('message-list');
   state.manualReading = list.scrollHeight - list.clientHeight - list.scrollTop > 40;
@@ -881,6 +955,11 @@ function handleDesktopKeydown(event) {
 if (window.desktopBridge) {
   window.desktopBridge.onShortcut(dispatchDesktopHotkey);
   window.desktopBridge.onShortcutError?.(message => { $('shortcut-status').textContent = message; toast(message); });
+  window.desktopBridge.onTypingStatus?.(value => {
+    if (!value || typeof value.message !== 'string') return;
+    if (value.active === false && state.typingBusy) invalidateTyping();
+    toast(value.message);
+  });
 }
 document.addEventListener('keydown', handleDesktopKeydown);
 if (initialRole !== state.role) setRole(initialRole);

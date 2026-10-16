@@ -72,7 +72,17 @@ npm audit
 
 `index.html` 保留配对／模型／截图元素，各角色底部三页通过 `navigatePage` 切换可见性，不重建 PeerSession。截图消息携带有界 `question` 字段，手机解码确认后携带该图自动提交；文字请求携带 `autoAsk`，不附加旧截图。滚动控制通过已配对数据通道传输，上翻后暂缓自动跟随。旧版本不能理解这些行为，因此协议升为 3。
 
-`src/shortcuts.js` 共用按键规则；`electron/shortcuts.cjs` 负责全局注册和冲突回滚。后台注册、前台 DOM 处理让输入框能正常使用方向键。窗口关闭收起到托盘，后台禁用节流、桌面 WebContents 静音。Num3 只切换已有主窗口中的输入栏，无新窗口或后台键盘采集。
+`src/shortcuts.js` 共用按键规则；`electron/shortcuts.cjs` 负责全局注册和冲突回滚。后台注册、前台 DOM 处理让输入框能正常使用方向键。窗口关闭收起到托盘，后台禁用节流、桌面 WebContents 静音。
+
+Num3 显式读取前台选区并以纯文字自动提问；旧版五键配置会补入 Shift+Num3。`electron/text-automation.cjs` 通过固定 PowerShell/C# 工作进程的 UTF-8 stdin/stdout 操作 Windows UI Automation 和 `SendInput`，不把内容拼入命令，也不写入日志。系统 PowerShell 5.1 编译随包 C# 源码，所需 UIAutomation/.NET Framework 是 Windows 10/11 桌面组件；受限语言策略可能阻止此功能，其他会议功能仍可使用。
+
+Windows 会把 Shift+Num3 转为导航键，C# 独立消息线程仅匹配设置中启用的 Shift+小键盘组合，以物理扫描码区分主键区导航键，忽略系统生成的假 Shift 松开事件；不将其他按键转换为文字、记录或发送。Electron 保留按键占用检测；窗口前台和快捷键关闭时不拦截组合。
+
+Shift+Num3 首先锁定前台窗口及可编辑 UIA 焦点，获取一次性 10 秒令牌，再向当前手机发送 `answer-request`；仅当前请求匹配的 `answer-result` 可开始键入。手机仅在没有生成中请求且最新回答完整时返回文本（最多 24000 UTF-16 单元）；新问题、失败、清空、取消和会话结束撤销旧答案。桌面不显示答案。新消息为协议 3 的向后兼容扩展，旧手机会超时提示更新，不降低原有配对版本门槛。
+
+中文默认 60 字/分钟；英文默认 90 词/分钟，按五字符一词。使用单调时钟安排各字符，UIA 及目标处理成本可能降低实际速度；换行/制表符为空格，拒绝其余控制字符，不发送回车键。每个字符前核对焦点与可编辑状态，Esc、再次按快捷键、失去连接或关闭快捷键通过独立读取线程的取消代次中止本次操作，保留小键盘识别线程供下次使用；组件超时或退出时终止进程。已经进入 Windows 输入队列的单个字符无法撤销。不得提升权限来绕过目标限制。相关 Windows API：[SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput)、[低级键盘事件](https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-kbdllhookstruct)。
+
+定向检查：`node --test test/main-session.test.js test/shortcuts.test.js test/text-automation.test.js`。`powershell.exe -NoProfile -Sta -File scripts/test-text-worker.ps1` 会短暂打开专用生成输入框并在结束后关闭，验证真实 UIA 选区、Unicode 输入、默认/自定义速度、焦点中止、密码/只读框、令牌过期及实体小键盘扫描码。不在用户其他应用中注入测试文字。界面与两端消息使用隔离 WebRTC/模拟 AI 检查，不重复长时真机流程。
 
 `src/voice-input.js` 将独立音轨分别接入 Web Audio 再混合；`voice-worklet.js` 做静音筛选、分段和 16 kHz PCM 输出，输出通过零增益节点维持处理，不播放采集内容。`electron/offline-speech.cjs` 校验输入大小，调用固定本机 CLI，串行处理、超时／取消清理。模型与引擎从固定官方版本下载并核验 SHA-256，不引入外部语音 API。
 

@@ -1,5 +1,10 @@
 // Runs the production Electron main/preload with isolated data and hidden windows.
 const { app, BrowserWindow, globalShortcut } = require('electron');
+// This hidden integration fixture must never copy from the user's foreground app.
+// Real UIA/SendInput are checked separately by test-text-worker.ps1 in its own input form.
+const textModule = require('../electron/text-automation.cjs');
+const originalTextFactory = textModule.createTextAutomation;
+textModule.createTextAutomation = options => Object.assign(originalTextFactory(options), { copySelection: async () => 'Please prepare my opening statement.' });
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const root = path.resolve(__dirname, '..'), qaRoot = path.join(root, 'release/xp-qa');
@@ -9,6 +14,7 @@ app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 app.commandLine.appendSwitch('allow-loopback-in-peer-connection');
 let showCount = 0, focusCount = 0, desktop, phone;
+const textOnly = process.argv.includes('--text-only');
 BrowserWindow.prototype.show = function () { showCount++; };
 BrowserWindow.prototype.focus = function () { focusCount++; };
 let timeout = setTimeout(() => { console.error('Native workspace preparation timed out'); app.exit(1); }, 720000);
@@ -23,7 +29,7 @@ app.whenReady().then(async () => {
     return desktop && await desktop.webContents.executeJavaScript(`Boolean(window.desktopBridge&&document.getElementById('app-version')?.textContent)`);
   }, 'production window');
   const evaluate = async (win, source) => { try { return await win.webContents.executeJavaScript(source); } catch (error) { console.error('Native QA step:', source.slice(0, 100)); throw error; } };
-  if (!await evaluate(desktop, `(async()=> (await desktopBridge.speechStatus()).ready)()`)) {
+  if (!textOnly && !await evaluate(desktop, `(async()=> (await desktopBridge.speechStatus()).ready)()`)) {
     console.log('Downloading pinned offline speech components for isolated QA (about 80 MB).');
     await evaluate(desktop, 'desktopBridge.installSpeech()');
   }
@@ -36,9 +42,9 @@ app.whenReady().then(async () => {
   if (!occupied) throw new Error('Cannot reserve Num2 for conflict validation');
   await evaluate(desktop, `(async()=>{let rejected=false;try{await desktopBridge.configureShortcuts({bindings:{screenshot:'num1',voice:'num2',text:'num3','scroll-up':'Up','scroll-down':'Down'},enabled:true,active:true,save:false});}catch{rejected=true;}if(!rejected||(await desktopBridge.getShortcuts()).enabled)throw new Error('Conflict did not roll back');})()`);
   globalShortcut.unregister('num2');
-  const speechFixture = (await fs.readFile(path.join(qaRoot, 'generated-speech.wav'))).toString('base64');
+  const speechFixture = textOnly ? '' : (await fs.readFile(path.join(qaRoot, 'generated-speech.wav'))).toString('base64');
   await evaluate(desktop, `(async()=>{
-    window.qaAudio=new AudioContext(); const bytes=Uint8Array.from(atob(${JSON.stringify(speechFixture)}),c=>c.charCodeAt(0));window.qaBuffer=await qaAudio.decodeAudioData(bytes.buffer);
+    window.qaAudio=new AudioContext(); const bytes=Uint8Array.from(atob(${JSON.stringify(speechFixture)}),c=>c.charCodeAt(0));window.qaBuffer=bytes.length?await qaAudio.decodeAudioData(bytes.buffer):null;
     window.qaSystem=qaAudio.createMediaStreamDestination();window.qaMicrophone=qaAudio.createMediaStreamDestination();
     const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);
     navigator.mediaDevices.getDisplayMedia=async()=>new MediaStream([...canvas.captureStream(5).getTracks(),...qaSystem.stream.getTracks()]);
@@ -53,35 +59,39 @@ app.whenReady().then(async () => {
   await wait(() => evaluate(desktop, `!document.getElementById('pairing-approval').hidden`), 'approval');
   await evaluate(desktop, `document.getElementById('allow-peer').click()`);
   await wait(() => evaluate(phone, `document.getElementById('mobile-status').textContent==='P2P 已加密直连'`), 'phone connected');
-  await evaluate(desktop, `(async()=>{const result=await desktopBridge.configureShortcuts({bindings:{screenshot:'num1',voice:'num2',text:'num3','scroll-up':'Up','scroll-down':'Down'},enabled:true,active:true,save:true});if(result.registered.length!==5)throw new Error('Global bindings missing');})()`);
+  await evaluate(desktop, `(async()=>{const result=await desktopBridge.configureShortcuts({bindings:{screenshot:'num1',voice:'num2',text:'num3','scroll-up':'Up','scroll-down':'Down'},enabled:true,active:true,save:true});if(result.registered.length!==6)throw new Error('Global bindings missing');})()`);
   const saved = JSON.parse(await fs.readFile(path.join(qaRoot, 'runtime/PAIRO-data/shortcuts.json'), 'utf8'));
   if (!saved.enabled || saved.bindings.screenshot !== 'num1' || saved.bindings['scroll-down'] !== 'Down' || 'active' in saved) throw new Error('Shortcut persistence is incomplete');
   desktop.webContents.send('desktop-shortcut', 'text');
-  await wait(() => evaluate(desktop, `!document.getElementById('desktop-input-panel').hidden`), 'text composer');
-  await evaluate(desktop, `document.getElementById('desktop-text').value='Please prepare my opening statement.';document.getElementById('desktop-composer').requestSubmit();`);
   await wait(() => evaluate(phone, `qaRequests.length===1&&Boolean(document.querySelector('.chat-message.answer'))`), 'text auto question');
+  await evaluate(desktop, `(async()=>{await desktopBridge.saveTypingSettings({chineseCpm:75,englishWpm:110});const read=await desktopBridge.readTypingSettings();if(read.chineseCpm!==75||read.englishWpm!==110)throw new Error('Typing settings persistence failed');let rejected=false;try{await desktopBridge.saveTypingSettings({chineseCpm:0,englishWpm:900});}catch{rejected=true;}if(!rejected)throw new Error('Invalid typing settings accepted');})()`);
+  const savedTyping = JSON.parse(await fs.readFile(path.join(qaRoot, 'runtime/PAIRO-data/typing-settings.json'), 'utf8'));
+  if (Object.keys(savedTyping).length !== 2 || savedTyping.chineseCpm !== 75 || savedTyping.englishWpm !== 110) throw new Error('Wrong typing settings file');
   const beforeScroll = await evaluate(phone, `document.getElementById('message-list').scrollTop`);
   desktop.webContents.send('desktop-shortcut', 'scroll-up');
   await wait(() => evaluate(phone, `document.getElementById('message-list').scrollTop<${beforeScroll - 100}`), 'remote scroll up');
   const afterUp = await evaluate(phone, `document.getElementById('message-list').scrollTop`);
   desktop.webContents.send('desktop-shortcut', 'scroll-down');
   await wait(() => evaluate(phone, `document.getElementById('message-list').scrollTop>${afterUp + 100}`), 'remote scroll down');
+  let sources = null;
+  if (!textOnly) {
   // Count actual source nodes in the production mixer; audio is routed into streams, never speakers.
   await evaluate(desktop, `window.qaSources=0;const original=AudioContext.prototype.createMediaStreamSource;AudioContext.prototype.createMediaStreamSource=function(...args){qaSources++;return original.apply(this,args);};void 0;`);
   desktop.webContents.send('desktop-shortcut', 'voice');
   await wait(() => evaluate(desktop, `document.getElementById('toggle-voice').classList.contains('listening')`), 'offline voice ready');
   await evaluate(desktop, `(async()=>{await qaAudio.resume();const source=qaAudio.createBufferSource();source.buffer=qaBuffer;source.connect(qaSystem);source.start();const mic=qaAudio.createBufferSource();mic.buffer=qaBuffer;const gain=qaAudio.createGain();gain.gain.value=.12;mic.connect(gain);gain.connect(qaMicrophone);mic.start();})()`);
   await wait(() => evaluate(phone, `qaRequests.some(request=>/local meeting assistant/i.test(request.messages.at(-1).content[0].text))`), 'real local audio transcription to phone');
-  const sources = await evaluate(desktop, 'qaSources');
+  sources = await evaluate(desktop, 'qaSources');
   if (sources !== 2) throw new Error('Microphone and system audio were not both mixed');
   desktop.webContents.send('desktop-shortcut', 'voice');
+  }
   await evaluate(desktop, `desktopBridge.configureShortcuts({enabled:false,active:false,save:true})`);
   if ((await evaluate(desktop, `desktopBridge.getShortcuts()`)).registered.length) throw new Error('Global keys not released');
   await evaluate(desktop, 'desktopBridge.hideToTray()'); desktop.close();
   if (desktop.isDestroyed() || desktop.isVisible()) throw new Error('Close did not preserve quiet background session');
   if (showCount !== baseline.showCount || focusCount !== baseline.focusCount) throw new Error('Hotkeys opened or focused a window');
   if (await evaluate(desktop, `document.getElementById('desktop-answer').textContent||document.getElementById('toast').classList.contains('show')`)) throw new Error('Desktop output was visible');
-  const result = { nativeIpc: true, osShortcutConflictRollback: true, fiveGlobalShortcuts: true, shortcutPersistence: true, textAutoQuestion: true, remoteScroll: true, realOfflineMixedAudio: true, mixerSources: sources, quietBackground: true, desktopAudioMuted: true };
+  const result = { nativeIpc: true, osShortcutConflictRollback: true, sixGlobalShortcuts: true, shortcutPersistence: true, typingSettingsPersistence: true, textAutoQuestion: true, remoteScroll: true, realOfflineMixedAudio: !textOnly, mixerSources: sources, quietBackground: true, desktopAudioMuted: true };
   await fs.writeFile(path.join(qaRoot, 'native-result.json'), JSON.stringify(result, null, 2)); console.log(JSON.stringify(result));
   await evaluate(desktop, `document.getElementById('stop-share').click();qaAudio.close();`);
   clearTimeout(timeout); phone.destroy(); app.quit();
