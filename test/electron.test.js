@@ -21,7 +21,7 @@ test('release-page IPC accepts only the app main frame and always uses a fixed H
   vm.runInNewContext(source.slice(source.indexOf('function trustedContents'), source.indexOf('const hasSingleInstanceLock')) + source.slice(source.indexOf("ipcMain.handle('desktop:signal-info'"), source.indexOf('app.whenReady()')), context);
   const open = handlers.get('desktop:open-releases');
   open({ sender: contents, senderFrame: frame }, 'https://untrusted.example/');
-  assert.deepEqual(opened, ['https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest']);
+  assert.deepEqual(opened, ['https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/latest']);
   assert.throws(() => open({ sender: contents, senderFrame: { url: frame.url } }), /Untrusted/);
   assert.throws(() => open({ sender: {}, senderFrame: frame }), /Untrusted/);
   frame.url = 'https://untrusted.example/';

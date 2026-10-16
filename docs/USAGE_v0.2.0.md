@@ -10,12 +10,12 @@
 
 | 设备 | 下载文件 | 用途 |
 | --- | --- | --- |
-| Windows 10 / 11，64 位电脑 | [电脑程序 EXE，约 111 MB](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-win-x64.exe) | 分享画面、发送截图、查看 AI 回答 |
-| Android 8 或更高版本手机 | [手机安装包 APK，约 31 MB](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-android.apk) | 接收画面、输入问题、请求 AI 回答 |
+| Windows 10 / 11，64 位电脑 | [电脑程序 EXE，约 111 MB](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-win-x64.exe) | 分享画面、发送截图、查看 AI 回答 |
+| Android 8 或更高版本手机 | [手机安装包 APK，约 31 MB](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-android.apk) | 接收画面、输入问题、请求 AI 回答 |
 
-如果经常使用，也可以选 [Windows 目录版 ZIP，约 151 MB](https://github.com/BuanDesu/p2p-meeting-copilot/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-win-x64-folder.zip)。完整解压一次后，直接打开其中的 `Pairo Meeting Copilot.exe`，以后打开会更快。EXE 与 ZIP 选一种即可。
+如果经常使用，也可以选 [Windows 目录版 ZIP，约 151 MB](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.2.0/Pairo-Meeting-Copilot-0.2.0-win-x64-folder.zip)。完整解压一次后，直接打开其中的 `Pairo Meeting Copilot.exe`，以后打开会更快。EXE 与 ZIP 选一种即可。
 
-也可以到 [版本下载页（Releases）](https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest)，在 **Assets** 选择安装包。页面底部的 **Source code** 是源码，普通使用者不用下载。
+也可以到 [版本下载页（Releases）](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/latest)，在 **Assets** 选择安装包。页面底部的 **Source code** 是源码，普通使用者不用下载。
 
 仓库目前是私有的，下载需要登录有此仓库访问权限的 GitHub 账号。目前没有 iPhone 安装包。
 

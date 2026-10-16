@@ -256,7 +256,7 @@ ipcMain.handle('desktop:preferences-write', (event, value) => {
 });
 ipcMain.handle('desktop:open-releases', event => {
   requireTrustedIpc(event);
-  return shell.openExternal('https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest');
+  return shell.openExternal('https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/latest');
 });
 ipcMain.handle('desktop:hide-to-tray', event => { requireTrustedIpc(event); mainWindow.hide(); });
 ipcMain.handle('desktop:shortcuts-read', event => { requireTrustedIpc(event); return shortcutManager.snapshot(); });
