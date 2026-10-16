@@ -11,3 +11,11 @@ release/
 .local-signing/
 *.keystore
 *.jks
+PAIRO-data/
+*.pfx
+*.p12
+*.pem
+*.key
+*.dmp
+*.hprof
+*.har

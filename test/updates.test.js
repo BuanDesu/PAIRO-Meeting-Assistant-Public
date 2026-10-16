@@ -28,13 +28,13 @@ test('only announces published stable releases with both matching uploaded packa
 test('checks only the fixed GitHub endpoint without credentials, redirects or model information', async () => {
   const data = release(); data.html_url = 'https://untrusted.example/';
   const result = await checkLatestRelease('0.2.0', { fetchImpl: async (url, options) => {
-    assert.equal(url, 'https://api.github.com/repos/BuanDesu/p2p-meeting-copilot/releases/latest');
+    assert.equal(url, 'https://api.github.com/repos/BuanDesu/PAIRO-Meeting-Assistant/releases/latest');
     assert.equal(options.credentials, 'omit'); assert.equal(options.redirect, 'error');
     assert.equal(options.referrerPolicy, 'no-referrer'); assert.equal(options.headers.Authorization, undefined);
     return new Response(JSON.stringify(data));
   } });
   assert.deepEqual(result, { kind: 'newer', version: '0.3.0' });
-  assert.equal(RELEASES_URL, 'https://github.com/BuanDesu/p2p-meeting-copilot/releases/latest');
+  assert.equal(RELEASES_URL, 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/latest');
 });
 
 test('private access, rate limiting, malformed and oversized responses remain actionable', async () => {
