@@ -24,6 +24,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Compile Windows selection and typing worker
+        if: runner.os == 'Windows'
+        run: powershell.exe -NoProfile -NonInteractive -Sta -ExecutionPolicy Bypass -File electron/text-worker.ps1 -CompileOnly
       - run: npm run build
 
   android-check:

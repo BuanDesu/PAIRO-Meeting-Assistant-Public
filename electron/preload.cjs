@@ -10,6 +10,18 @@ contextBridge.exposeInMainWorld('desktopBridge', Object.freeze({
   writePreferences: value => ipcRenderer.invoke('desktop:preferences-write', value),
   openReleases: () => ipcRenderer.invoke('desktop:open-releases'),
   hideToTray: () => ipcRenderer.invoke('desktop:hide-to-tray'),
+  copySelection: () => invoke('desktop:copy-selection'),
+  prepareTyping: () => invoke('desktop:typing-prepare'),
+  typeAnswer: value => invoke('desktop:typing-start', value),
+  cancelTyping: () => invoke('desktop:typing-cancel'),
+  readTypingSettings: () => invoke('desktop:typing-settings-read'),
+  saveTypingSettings: value => invoke('desktop:typing-settings-write', value),
+  onTypingStatus: callback => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, message) => callback(message);
+    ipcRenderer.on('desktop-typing-status', listener);
+    return () => ipcRenderer.removeListener('desktop-typing-status', listener);
+  },
   getShortcuts: () => ipcRenderer.invoke('desktop:shortcuts-read'),
   configureShortcuts: value => invoke('desktop:shortcuts-write', value),
   speechStatus: () => ipcRenderer.invoke('desktop:speech-status'),

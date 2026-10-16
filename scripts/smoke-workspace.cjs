@@ -30,6 +30,16 @@ app.whenReady().then(async () => {
   const origin = 'http://127.0.0.1:' + ui.address().port;
   ipcMain.handle('ui-smoke-signal', () => ({ signalBase, lanAddresses: [{ interface: 'Wi-Fi', ip: '192.168.1.20', url: 'http://192.168.1.20:8787' }] }));
   ipcMain.handle('ui-smoke-open-releases', () => {});
+  const { DEFAULT_TYPING, validateTyping } = require('../electron/text-automation.cjs');
+  let rates = { ...DEFAULT_TYPING }; const typedAnswers = [], token = 'f'.repeat(32);
+  ipcMain.handle('ui-smoke-selection', () => 'Please explain the selected questionnaire question.');
+  ipcMain.handle('ui-smoke-typing-prepare', () => token);
+  ipcMain.handle('ui-smoke-typing-start', (_event, value) => {
+    if (value.token !== token) throw new Error('Wrong typing token');
+    typedAnswers.push(value.text); return { count: value.text.length };
+  });
+  ipcMain.handle('ui-smoke-typing-settings-read', () => rates);
+  ipcMain.handle('ui-smoke-typing-settings-write', (_event, value) => { rates = validateTyping(value); return rates; });
   const desktop = new BrowserWindow({ width: 1120, height: 900, show: false, webPreferences: { backgroundThrottling: false, preload: path.join(__dirname, 'ui-smoke-preload.cjs'), partition: 'xp-desktop-qa' } });
   const phone = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { backgroundThrottling: false, partition: 'xp-mobile-qa' } });
   const errors = [];
@@ -62,6 +72,17 @@ app.whenReady().then(async () => {
   await wait(() => evaluate(phone, `document.querySelectorAll('.chat-message.answer').length===1`), 'automatic screenshot question');
   const checks = await evaluate(phone, `(()=>{const request=qaQuestions[0],content=request.messages.at(-1).content;if(content[0].text!=='请回答图中的问题。'||content[1].type!=='image_url')throw new Error('Question and screenshot were not paired');if(document.getElementById('mobile-chat-page').hidden)throw new Error('Phone did not open assistant');return {screenshotAutoQuestion:true,phoneOnlyAnswer:true};})()`);
   await evaluate(desktop, `if(document.getElementById('desktop-answer').textContent)throw new Error('Answer reached desktop');if(document.getElementById('toast').classList.contains('show'))throw new Error('Desktop toast surfaced');`);
+  desktop.webContents.send('ui-smoke-shortcut', 'type-answer');
+  await wait(() => typedAnswers.length === 1, 'explicit screenshot answer retrieval');
+  desktop.webContents.send('ui-smoke-shortcut', 'text');
+  await wait(() => evaluate(phone, `qaQuestions.length===2&&document.querySelectorAll('.chat-message.answer').length===2`), 'selected text auto question');
+  await evaluate(phone, `(()=>{const content=qaQuestions[1].messages.at(-1).content;if(content.length!==1||content[0].type!=='text'||!content[0].text.includes('selected questionnaire'))throw new Error('Selection accidentally attached stale screenshot');})()`);
+  desktop.webContents.send('ui-smoke-shortcut', 'type-answer');
+  await wait(() => typedAnswers.length === 2, 'explicit text answer retrieval');
+  if (typedAnswers.some(value => !value.includes('两项具体行动'))) throw new Error('Wrong phone answer retrieved');
+  await evaluate(desktop, `document.getElementById('typing-chinese').value='100';document.getElementById('typing-english').value='120';document.getElementById('typing-settings-form').requestSubmit();`);
+  await wait(() => rates.chineseCpm === 100 && rates.englishWpm === 120, 'typing speed settings');
+  checks.selectedTextAutoQuestion = true; checks.explicitAnswerRetrieval = true; checks.typingSettings = true;
   for (const page of ['pair', 'source', 'keys']) {
     await evaluate(desktop, `document.getElementById('desktop-nav-${page}').click();if(document.getElementById('room-code').textContent!==${JSON.stringify(room)})throw new Error('Navigation replaced room');`);
     await snapshot(desktop, 'desktop-' + page);
