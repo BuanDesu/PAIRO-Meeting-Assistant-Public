@@ -28,6 +28,7 @@ const state = {
   captureSwitchPending: false,
   pages: { desktop: 'pair', mobile: 'pair' }, shortcuts: { ...DEFAULT_SHORTCUTS }, shortcutsEnabled: false,
   typingRequest: null, typingBusy: false, typingGeneration: 0,
+  selectionGeneration: 0,
   voiceInput: null, voiceGeneration: 0, manualReading: false,
 };
 const preferenceKey = 'pairo.preferences.v1';
@@ -60,6 +61,7 @@ function savePreferences() {
 }
 
 function resetConversation() {
+  state.selectionGeneration += 1;
   invalidateTyping();
   state.screenshotGeneration += 1;
   state.screenshotController?.abort();
@@ -180,6 +182,7 @@ function makePeer(role) {
     role,
     onStatus: message => {
       if (state.peer !== peer) return;
+      if (peer.phase !== 'connected') state.selectionGeneration += 1;
       if (role === 'desktop' && peer.phase !== 'connected' && state.typingBusy) invalidateTyping();
       if (!peer.awaitingApproval) $('pairing-approval').hidden = true;
       if (role === 'desktop') $('reconnect-desktop').hidden = !['failed', 'disconnected', 'reconnecting'].includes(peer.phase);
@@ -200,12 +203,12 @@ async function dispatchDesktopHotkey(action) {
   if (action === 'screenshot') void takeScreenshot(false, true);
   if (action === 'voice') state.voiceActive ? stopVoice(true) : startVoice();
   if (action === 'text') {
-    const peer = state.peer, generation = state.typingGeneration;
+    const peer = state.peer, generation = state.selectionGeneration;
     if (peer?.phase !== 'connected') return toast('请先等待手机连接成功');
     if (!window.desktopBridge?.copySelection) return toast('选中文字需要 Windows 桌面程序');
     try {
       const selection = await window.desktopBridge.copySelection();
-      if (peer !== state.peer || generation !== state.typingGeneration || peer.phase !== 'connected') return;
+      if (peer !== state.peer || generation !== state.selectionGeneration || peer.phase !== 'connected') return;
       await sendDesktopQuestion(selection);
     } catch (error) { toast(error.message); }
   }

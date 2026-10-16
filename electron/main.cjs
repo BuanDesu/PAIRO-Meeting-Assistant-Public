@@ -276,7 +276,7 @@ ipcMain.handle('desktop:typing-prepare', event => {
   return textAutomation.prepare();
 });
 ipcMain.handle('desktop:typing-start', (event, value) => { requireTextSession(event); return textAutomation.type(value, typingSettings); });
-ipcMain.handle('desktop:typing-cancel', event => { requireTrustedIpc(event); textAutomation.cancel(); });
+ipcMain.handle('desktop:typing-cancel', event => { requireTrustedIpc(event); if (textAutomation.active) textAutomation.cancel(); });
 ipcMain.handle('desktop:typing-settings-read', event => { requireTrustedIpc(event); return { ...typingSettings }; });
 ipcMain.handle('desktop:typing-settings-write', (event, value) => {
   requireTrustedIpc(event); const next = validateTyping(value);

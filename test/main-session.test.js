@@ -300,6 +300,18 @@ test('a selection read finishing after session departure is never sent', async (
   finish('old selection'); await reading; assert.equal(sent.length, 0);
 });
 
+test('ongoing voice questions revoke answer typing without discarding a new selection; a session reset still discards it', async () => {
+  let finish; const sent = [];
+  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, copySelection: () => new Promise(resolve => { finish = resolve; }) } } });
+  fx.state.displayStream = new fx.Stream(); fx.state.peer = { phase: 'connected', send: async value => sent.push(value) };
+  let reading = fx.dispatchDesktopHotkey('text');
+  await fx.handleDesktopMessage({ type: 'answer-invalidated' });
+  finish('selected while voice is active'); await reading;
+  assert.equal(sent.length, 1); assert.equal(sent[0].text, 'selected while voice is active');
+  reading = fx.dispatchDesktopHotkey('text'); fx.resetConversation();
+  finish('belongs to previous session'); await reading; assert.equal(sent.length, 1);
+});
+
 test('answer is retrieved only by matching explicit request, never displayed, and repeated hotkey cancels', async () => {
   const token = 'a'.repeat(32), sent = [], typed = []; let stops = 0;
   const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, prepareTyping: async () => token, typeAnswer: async value => typed.push(value), cancelTyping: async () => { stops++; } } } });
