@@ -4,7 +4,7 @@ PAIRO 是一个同时在电脑和手机上使用的会议助手。电脑把你�
 
 你可以把它当作一份不断更新的发言提示：会议投屏留在电脑，回答留在手边的手机。准备完成后，电脑端可以收进右下角托盘，使用快捷键操作，不会自动弹出回答或朗读。
 
-**当前正式版：v0.3.0。** 第一次使用，按下面的“下载 → 配对 → 设置 AI → 开始使用”操作即可，不需要安装编程工具。
+**当前正式版：v0.4.0。** 第一次使用，按下面的“下载 → 配对 → 设置 AI → 开始使用”操作即可，不需要安装编程工具。
 
 ## 1. 下载到电脑和手机
 
@@ -12,15 +12,15 @@ PAIRO 是一个同时在电脑和手机上使用的会议助手。电脑把你�
 
 | 在哪里使用 | 下载哪个文件 | 下载后怎么做 |
 | --- | --- | --- |
-| Windows 电脑，方便直接打开 | [Windows EXE](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-win-x64.exe) | 放到自己可写的文件夹，双击运行 |
-| Windows 电脑，希望以后打开更快 | [Windows ZIP](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-win-x64-folder.zip) | 先完整解压，再双击里面的 `Pairo Meeting Copilot.exe` |
-| Android 手机 | [Android APK](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.3.0/Pairo-Meeting-Copilot-0.3.0-android.apk) | 在手机打开文件，按系统提示允许安装 |
+| Windows 电脑，方便直接打开 | [Windows EXE](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-win-x64.exe) | 放到自己可写的文件夹，双击运行 |
+| Windows 电脑，希望以后打开更快 | [Windows ZIP](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-win-x64-folder.zip) | 先完整解压，再双击里面的 `Pairo Meeting Copilot.exe` |
+| Android 手机 | [Android APK](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-android.apk) | 在手机打开文件，按系统提示允许安装 |
 
 电脑版 EXE 和 ZIP 任选一种；手机还需要安装 APK。
 
-[查看完整发布页](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/tag/v0.3.0) · [文件完整性校验](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.3.0/SHA256SUMS.txt)
+[查看完整发布页](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/tag/v0.4.0) · [文件完整性校验](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/SHA256SUMS.txt)
 
-仓库已改用 **PAIRO-Meeting-Assistant** 名称；v0.3.0 已发布安装包仍保留原文件名，方便已有下载链接和校验文件继续使用。Windows 程序目前没有代码签名证书。
+仓库已改用 **PAIRO-Meeting-Assistant** 名称；下载文件仍沿用 `Pairo-Meeting-Copilot` 命名，程序名称和已有配置保持兼容。Windows 程序目前没有代码签名证书。
 
 ## 2. 先把电脑和手机连起来
 
@@ -65,7 +65,7 @@ Key 不会保存为下次启动的设置，重新启动应用后需要再次填�
 
 ## 4. 开始使用会议助手
 
-**版本说明：下面的选区提问、回答键入是下一版的新功能，尚未包含在第 1 节的 v0.3.0 下载包中。v0.3.0 的 Num3 仍是主窗口文本输入栏；新操作需要电脑和手机同时更新后使用。**
+**请将电脑和手机都更新到 v0.4.0。** 本版将 Num3 改为选中文字提问，并增加 Shift+Num3 回答键入；旧版手机不支持新操作。
 
 先在电脑 **“快捷键设置”** 中启用快捷键。使用右侧小键盘时，请开启 **Num Lock**；没有小键盘，可以在这里改成自己方便的组合键。
 
