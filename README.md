@@ -4,23 +4,15 @@ PAIRO 是一个同时在电脑和手机上使用的会议助手。电脑把你�
 
 你可以把它当作一份不断更新的发言提示：会议投屏留在电脑，回答留在手边的手机。准备完成后，电脑端可以收进右下角托盘，使用快捷键操作，不会自动弹出回答或朗读。
 
-**当前正式版：v0.4.0。** 第一次使用，按下面的“下载 → 配对 → 设置 AI → 开始使用”操作即可，不需要安装编程工具。
+**当前源码版本：v0.4.0。** 本公开仓库提供清洗后的项目源码和历史标签，目前尚未发布公开安装包。旧私人仓库的安装包没有复制到这里，历史标签也不代表已重新构建或验证的公开二进制。
 
-## 1. 下载到电脑和手机
+## 1. 获取程序
 
-你需要一台 **Windows 10/11 的 64 位电脑**、一部 **Android 8 或更新版本的手机**，以及可用的 AI 服务。
+需要一台 **Windows 10/11 的 64 位电脑**、一部 **Android 8 或更新版本的手机**，以及可用的 AI 服务。
 
-| 在哪里使用 | 下载哪个文件 | 下载后怎么做 |
-| --- | --- | --- |
-| Windows 电脑，方便直接打开 | [Windows EXE](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-win-x64.exe) | 放到自己可写的文件夹，双击运行 |
-| Windows 电脑，希望以后打开更快 | [Windows ZIP](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-win-x64-folder.zip) | 先完整解压，再双击里面的 `Pairo Meeting Copilot.exe` |
-| Android 手机 | [Android APK](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/Pairo-Meeting-Copilot-0.4.0-android.apk) | 在手机打开文件，按系统提示允许安装 |
+当前请按 [开发与构建指南](docs/DEVELOPMENT.md) 自行构建 Windows 程序和 Android APK，再按下文配对和使用。正式 Android 签名材料不随源码提供；自行签名的 APK 不能保证覆盖安装旧版。Windows 程序目前没有代码签名证书。
 
-电脑版 EXE 和 ZIP 任选一种；手机还需要安装 APK。
-
-[查看完整发布页](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/tag/v0.4.0) · [文件完整性校验](https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/download/v0.4.0/SHA256SUMS.txt)
-
-仓库已改用 **PAIRO-Meeting-Assistant** 名称；下载文件仍沿用 `Pairo-Meeting-Copilot` 命名，程序名称和已有配置保持兼容。Windows 程序目前没有代码签名证书。
+未来公开安装包将通过 [本仓库 Releases](https://github.com/BuanDesu/PAIRO-Meeting-Assistant-Public/releases) 提供。迁移范围、历史记录和安装包来源说明见 [公开迁移说明](docs/PUBLIC_MIGRATION.md)。
 
 ## 2. 先把电脑和手机连起来
 

@@ -1,4 +1,4 @@
-param([switch]$Upload, [string]$Repository = 'BuanDesu/PAIRO-Meeting-Assistant')
+param([switch]$Upload, [string]$Repository = 'BuanDesu/PAIRO-Meeting-Assistant-Public')
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path $PSScriptRoot -Parent
 $taskSigningDir = Join-Path $taskRoot '.local-signing'

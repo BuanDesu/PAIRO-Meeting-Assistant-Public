@@ -1,5 +1,5 @@
-export const RELEASES_URL = 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant/releases/latest';
-const LATEST_API = 'https://api.github.com/repos/BuanDesu/PAIRO-Meeting-Assistant/releases/latest';
+export const RELEASES_URL = 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant-Public/releases/latest';
+const LATEST_API = 'https://api.github.com/repos/BuanDesu/PAIRO-Meeting-Assistant-Public/releases/latest';
 const MAX_RESPONSE_BYTES = 128 * 1024;
 
 export function releaseVersion(value) {
