@@ -104,9 +104,11 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           overwrite_files: false
+          draft: true
           body_path: artifacts/RELEASE_NOTES.md
           files: |
             artifacts/windows/*.exe
             artifacts/windows/*.zip
             artifacts/android/*.apk
             artifacts/SHA256SUMS.txt
+            artifacts/BUILD_PROVENANCE.json

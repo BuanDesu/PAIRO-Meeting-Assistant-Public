@@ -10,7 +10,7 @@
 
 ## 自动打包发布
 
-推送指向已验证提交的 `v<版本>` 标签会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE / 目录 ZIP 和 Android 正式签名 APK，测试通过、三份文件都生成并验证后才创建或补全 Release。`npm run release:check` 检查标签、package.json 与锁文件版本，Android 内部版本也由同一版本生成。
+推送指向已验证提交的 `v<版本>` 标签会触发 `.github/workflows/package-release.yml`。工作流分别构建 Windows EXE / 目录 ZIP 和 Android 正式签名 APK，测试通过、三份文件都生成并验证后才创建草稿 Release。`npm run release:check` 检查标签、package.json 与锁文件版本，Android 内部版本也由同一版本生成。
 
 发布文件名：
 
@@ -25,7 +25,7 @@
 
 ## 上传已经构建的安装包
 
-也可以使用 GitHub 网页或 GitHub CLI，基于与产物一致的已验证提交创建草稿 Release，上传 EXE、APK，核对文件名、字节大小及 SHA-256 后再发布。v0.1.0 使用已在本机完成测试与构建的安装包。
+也可以使用 GitHub 网页或 GitHub CLI，基于与产物一致的已验证提交创建草稿 Release，上传 EXE、APK，核对文件名、字节大小、SHA-256、包内 build-provenance.json、精确提交 CI 及固定 APK 证书后再发布。v0.1.0 使用已在本机完成测试与构建的安装包。
 
 自动发布不会覆盖同名的现有附件，避免后续重复构建替换已下载的安装包。需要更新程序时请使用新版本和新标签。
 
@@ -54,3 +54,7 @@ powershell -NoProfile -File scripts/build-android-release.ps1
 未获得授权或未配置密钥时只执行 `npm run android:apk` 开发验收；发布工作流会明确失败，不发布未签名或调试签名替代品。
 
 2026-10-13 维护者已明确授权并完成首次固定签名配置：本机目录受限保存、四项 Actions Secrets 上传及正式 APK 签名检查通过。今后应复用现有密钥；私钥不在源码中。当前正式证书 SHA-256 指纹为 `b9ccb30df1c5cfec3e0f2eb6baffe57fe01ee13d045dfea8612c66b328eed400`，可用 `apksigner verify --print-certs` 核对后续 APK。
+
+## 公开仓库构建来源
+
+`npm run build` 将实际干净 Git 提交与版本写入 dist/build-provenance.json，Windows 和 Android 包均包含该文件。发布脚本另生成 BUILD_PROVENANCE.json；工作流只创建草稿，维护者必须比对实际包内来源、标签、精确提交 CI、签名、版本与校验文件，再将草稿设为正式发布。新增版本使用新标签，不能移动旧标签或替换既有同名附件。
