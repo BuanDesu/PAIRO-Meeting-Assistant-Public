@@ -16,7 +16,10 @@ function Get-ArchiveSha256([string]$Path) {
     $algorithm.Dispose()
   }
 }
-$hashes = @{ '44.4.5' = '11c395820a5aaa8ebcc0686b476d0ac98a730274ebfbdc8cf5538a7c2815cb5d' }
+$hashes = @{
+  '44.4.5' = '11c395820a5aaa8ebcc0686b476d0ac98a730274ebfbdc8cf5538a7c2815cb5d'
+  '44.10.0' = '64c2d874fea1bd4c8d2e1f2df3a547497044159a6b853dee7fcdff357ff0e3cd'
+}
 if (-not $hashes.ContainsKey($Version)) { throw "No verified Windows Electron SHA256 is recorded for version $Version" }
 $expected = $hashes[$Version]
 $file = 'electron-v' + $Version + '-win32-x64.zip'
