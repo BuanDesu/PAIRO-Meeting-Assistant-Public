@@ -5,6 +5,24 @@ const invoke = async (channel, ...args) => {
 };
 
 contextBridge.exposeInMainWorld('desktopBridge', Object.freeze({
+  knowledgeList: () => invoke('desktop:knowledge-list'),
+  knowledgeChoose: () => invoke('desktop:knowledge-choose'),
+  knowledgeUpdate: value => invoke('desktop:knowledge-update', value),
+  knowledgeRemove: value => invoke('desktop:knowledge-remove', value),
+  knowledgeCancel: () => invoke('desktop:knowledge-cancel'),
+  knowledgeSearch: value => invoke('desktop:knowledge-search', value),
+  onKnowledgeProgress: callback => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on('desktop-knowledge-progress', listener);
+    return () => ipcRenderer.removeListener('desktop-knowledge-progress', listener);
+  },
+  runModel: value => invoke('desktop:model-run', value),
+  cancelModel: id => invoke('desktop:model-cancel', id),
+  onModelPartial: callback => {
+    const listener = (_event, message) => callback(message);
+    ipcRenderer.on('desktop-model-partial', listener);
+    return () => ipcRenderer.removeListener('desktop-model-partial', listener);
+  },
   getSignalInfo: () => ipcRenderer.invoke('desktop:signal-info'),
   readPreferences: () => ipcRenderer.invoke('desktop:preferences-read'),
   writePreferences: value => ipcRenderer.invoke('desktop:preferences-write', value),
@@ -25,8 +43,9 @@ contextBridge.exposeInMainWorld('desktopBridge', Object.freeze({
   getShortcuts: () => ipcRenderer.invoke('desktop:shortcuts-read'),
   configureShortcuts: value => invoke('desktop:shortcuts-write', value),
   speechStatus: () => ipcRenderer.invoke('desktop:speech-status'),
+  configureSpeech: value => invoke('desktop:speech-settings-write', value),
   installSpeech: () => invoke('desktop:speech-install'),
-  transcribeAudio: pcm => invoke('desktop:speech-transcribe', pcm),
+  transcribeAudio: (pcm, source) => invoke('desktop:speech-transcribe', pcm, source),
   cancelTranscription: () => ipcRenderer.invoke('desktop:speech-cancel'),
   onShortcutError: callback => {
     if (typeof callback !== 'function') return () => {};

@@ -21,3 +21,10 @@ main{flex:1;min-height:0;display:flex}.role-view{width:100%;min-height:0;display
   .topbar{padding-top:6px}
   .bottom-nav{padding-bottom:5px}
 }
+
+/* Role navigation extends the existing XP controls. */
+#desktop-view>.bottom-nav{grid-template-columns:repeat(5,minmax(0,1fr))}
+#mobile-view>.bottom-nav{grid-template-columns:repeat(2,minmax(0,1fr))}
+.prompter-entry{flex:none;display:flex;flex-direction:column;gap:8px}.prompter-entry .hint{white-space:pre-wrap}.chat-message.answer[data-status="failed"],.chat-message.answer[data-status="cancelled"]{border-left-color:#a52c26}
+
+#knowledge-list{max-width:900px;margin:auto}.knowledge-path,.knowledge-file{overflow-wrap:anywhere}.knowledge-file{border-top:1px solid #bcbab0;padding:12px 0;font-size:12px}.knowledge-file summary{cursor:pointer;color:#174b96}.knowledge-summary,.knowledge-file blockquote{white-space:pre-wrap;line-height:1.8}.knowledge-file blockquote{max-height:180px;overflow:auto;background:#fffdf7;box-shadow:var(--sunken);padding:12px;margin:8px 0;color:#526173}#knowledge-progress{width:min(100%,320px);margin-right:12px;accent-color:#225fc4}

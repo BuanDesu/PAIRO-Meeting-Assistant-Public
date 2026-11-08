@@ -7,6 +7,12 @@ function sanitizePreferences(value) {
   for (const [key, limit] of Object.entries({ signalBase: 2048, endpoint: 2048, model: 256 })) {
     if (typeof value[key] === 'string') result[key] = value[key].trim().slice(0, limit);
   }
+  if (result.endpoint) {
+    try {
+      const url = new URL(result.endpoint);
+      if (url.username || url.password || [...url.searchParams.keys()].some(key => /key|token|secret|authorization|credential|signature/i.test(key))) result.endpoint = '';
+    } catch { result.endpoint = ''; }
+  }
   return result;
 }
 

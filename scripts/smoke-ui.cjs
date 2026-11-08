@@ -6,6 +6,8 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const root = path.resolve(__dirname, '..');
 const dist = path.join(root, 'dist');
+const output = path.resolve(root, process.env.PAIRO_QA_OUTPUT || 'release/ui-qa');
+if (process.env.PAIRO_QA_OUTPUT) app.setPath('userData', path.join(output, 'profile'));
 let win, phone, ui, signaling;
 const timeout = setTimeout(() => { console.error('UI smoke timed out'); app.exit(1); }, 60000);
 app.disableHardwareAcceleration();
@@ -25,6 +27,7 @@ app.whenReady().then(async () => {
   const signalBase = 'http://127.0.0.1:' + signaling.server.address().port;
   let releasesOpened = 0;
   ipcMain.handle('ui-smoke-open-releases', () => { releasesOpened++; });
+  ipcMain.handle('ui-smoke-typing-settings-read', () => ({ chineseCpm: 60, englishWpm: 90 }));
   ipcMain.handle('ui-smoke-signal', () => ({ signalBase, lanAddresses: [
     { interface: 'Wi-Fi', ip: '192.168.1.20', url: 'http://192.168.1.20:8787' },
     { interface: 'VPN', ip: '10.0.0.1', url: 'http://10.0.0.1:8787' },
@@ -45,7 +48,7 @@ app.whenReady().then(async () => {
   win = new BrowserWindow({ width: 1120, height: 900, show: false, webPreferences: { backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'ui-smoke-preload.cjs') } });
   ipcMain.handle('ui-smoke-snapshot', async (_event, name) => {
     if (name !== 'region') throw new Error('Unknown QA snapshot');
-    await fs.writeFile(path.join(root, 'release', 'ui-qa', 'region.png'), await captureRendered());
+    await fs.writeFile(path.join(output, 'region.png'), await captureRendered());
   });
   await win.loadURL(origin + '/bootstrap');
   await win.webContents.executeJavaScript("localStorage.setItem('pairo.preferences.v1','null')");
@@ -94,11 +97,12 @@ app.whenReady().then(async () => {
     return {invalidPreferencesRecovered:true,addressSelection:true,qrRendered:true,roomCode:el('room-code').textContent};
   })()`);
   if (releasesOpened !== 1) throw new Error('Desktop release link did not reach the native bridge');
-  await fs.mkdir(path.join(root, 'release', 'ui-qa'), { recursive: true });
-  await fs.writeFile(path.join(root, 'release', 'ui-qa', 'desktop.png'), await captureRendered());
+  await fs.mkdir(output, { recursive: true });
+  await fs.writeFile(path.join(output, 'desktop.png'), await captureRendered());
   phone = new BrowserWindow({ width: 390, height: 844, show: false, webPreferences: { backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false } });
   await phone.loadURL(origin);
   await phone.webContents.executeJavaScript(`document.getElementById('mobile-tab').click(); document.getElementById('mobile-signal').value=${JSON.stringify(signalBase)}; document.getElementById('mobile-room').value=${JSON.stringify(result.roomCode)}; document.getElementById('mobile-connect').requestSubmit();`);
+  await win.webContents.executeJavaScript(`window.qaRequests=[];window.qaLastImage='';const qaFetch=window.fetch;window.fetch=async(url,options)=>{if(!options?.body)return qaFetch(url,options);const request=JSON.parse(options.body);qaRequests.push(request);qaLastImage=request.messages.at(-1).content.find(p=>p.type==='image_url')?.image_url.url||'';try{if(qaLastImage){const image=new Image();image.src=qaLastImage;await image.decode();}}catch{return Response.json({error:{message:'invalid screenshot'}},{status:400});}return Response.json({choices:[{message:{content:'模拟截图回答'}}]});};document.getElementById('llm-key').value='synthetic-media-qa';true`);
   const receipt = await win.webContents.executeJavaScript(`(async () => {
     const el=id=>document.getElementById(id);
     const wait=async p=>{const until=Date.now()+15000;while(!p()){if(Date.now()>until)throw new Error('Screenshot UI state timed out: '+el('desktop-status').textContent);await new Promise(r=>setTimeout(r,20));}};
@@ -112,28 +116,28 @@ app.whenReady().then(async () => {
     await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
     await window.desktopBridge.saveQaSnapshot('region');
     el('region-send').click();
-    await wait(()=>el('shot-progress-text').textContent==='手机已确认收到截图');
+    await wait(()=>qaRequests.length===1&&el('model-queue-status').textContent.startsWith('回答已完成'));
     if(el('region-preview').width!==0||el('region-dialog').open)throw new Error('Frozen full frame was retained');
     return {regionConfirmed:true,localSnapshotCleared:true};
   })()`);
-  const pixels = await phone.webContents.executeJavaScript(`(async()=>{
-    const image=document.getElementById('attachment-thumb'); await image.decode();
+  const pixels = await win.webContents.executeJavaScript(`(async()=>{
+    const image=new Image();image.src=qaLastImage;await image.decode();
     if(image.naturalWidth!==320||image.naturalHeight!==360)throw new Error('Crop dimensions are wrong');
     const canvas=document.createElement('canvas');canvas.width=320;canvas.height=360;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0);
     for(const [x,y] of [[2,2],[317,2],[2,357],[317,357],[160,180]]){const p=ctx.getImageData(x,y,1,1).data;if(p[1]<150||p[0]>90)throw new Error('Outside red pixels were transmitted');}
     return {onlySelectedPixels:true,cropWidth:320,cropHeight:360};
   })()`);
-  const beforeRejected = await phone.webContents.executeJavaScript("document.querySelectorAll('.chat-message').length");
+  const beforeRejected = await phone.webContents.executeJavaScript("document.querySelectorAll('.chat-message.answer[data-status=complete]').length");
   await win.webContents.executeJavaScript(`(async()=>{
     const original=HTMLCanvasElement.prototype.toDataURL;
     try{
       HTMLCanvasElement.prototype.toDataURL=()=> 'data:image/jpeg;base64,BROKEN';
       document.getElementById('take-shot').click();
       const until=Date.now()+8000;
-      while(!document.getElementById('shot-progress-text').textContent.includes('无法显示')){if(Date.now()>until)throw new Error('Bad image was not rejected');await new Promise(r=>setTimeout(r,20));}
+      while(!document.getElementById('model-queue-status').textContent.includes('问题格式')){if(Date.now()>until)throw new Error('Bad image was not rejected');await new Promise(r=>setTimeout(r,20));}
     }finally{HTMLCanvasElement.prototype.toDataURL=original;}
   })()`);
-  if(await phone.webContents.executeJavaScript("document.querySelectorAll('.chat-message').length")!==beforeRejected)throw new Error('Bad image reached the conversation');
+  if(await phone.webContents.executeJavaScript("document.querySelectorAll('.chat-message.answer[data-status=complete]').length")!==beforeRejected)throw new Error('Bad image became a complete answer');
   const sourceSwitch = await win.webContents.executeJavaScript(`(async()=>{
     const el=id=>document.getElementById(id),room=el('room-code').textContent,old=window.uiSmokeTrack,original=navigator.mediaDevices.getDisplayMedia;
     const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;const ctx=canvas.getContext('2d');ctx.fillStyle='#2244ee';ctx.fillRect(0,0,640,360);
@@ -153,7 +157,37 @@ app.whenReady().then(async () => {
   await phone.webContents.executeJavaScript(`(async()=>{
     const video=document.getElementById('remote-preview'),until=Date.now()+5000,canvas=document.createElement('canvas');canvas.width=canvas.height=1;
     while(true){canvas.getContext('2d').drawImage(video,0,0,1,1);const p=canvas.getContext('2d').getImageData(0,0,1,1).data;if(p[2]>150&&p[0]<90)break;if(Date.now()>until)throw new Error('Phone did not receive replacement source');await new Promise(r=>setTimeout(r,50));}
-    if(document.getElementById('attachment-strip').hidden||document.getElementById('mobile-status').textContent!=='P2P 已加密直连')throw new Error('Switch cleared attachment or disconnected phone');
+    if(document.getElementById('mobile-status').textContent!=='P2P 已加密直连')throw new Error('Switch disconnected phone');
+  })()`);
+  const pauseRoom = await win.webContents.executeJavaScript(`(async()=>{
+    const el=id=>document.getElementById(id),room=el('room-code').textContent;
+    el('take-region-shot').click();await new Promise(r=>setTimeout(r,60));
+    el('stop-share').click();
+    if(uiSmokeTrack.readyState!=='ended'||el('local-preview').srcObject||el('region-dialog').open||el('region-preview').width!==0||el('room-code').textContent!==room)throw new Error('Pause retained capture or reset room');
+    navigator.mediaDevices.getDisplayMedia=async()=>{throw new DOMException('cancel','NotAllowedError');};
+    el('start-share').click();await new Promise(r=>setTimeout(r,120));
+    if(el('room-code').textContent!==room||el('desktop-status').textContent!=='P2P 已加密直连'||el('start-share').disabled)throw new Error('Cancelled resume damaged pairing');
+    return room;
+  })()`);
+  await phone.webContents.executeJavaScript(`(async()=>{
+    const el=id=>document.getElementById(id),until=Date.now()+5000;
+    while(el('remote-empty-title').textContent!=='电脑已停止共享'){if(Date.now()>until)throw new Error('Phone kept stale frame after pause');await new Promise(r=>setTimeout(r,20));}
+    if(el('remote-preview').srcObject||el('remote-audio').srcObject||el('mobile-status').textContent!=='P2P 已加密直连'||!document.querySelector('.chat-message.answer[data-status=complete]'))throw new Error('Pause lost pairing or answers');
+  })()`);
+  await win.webContents.executeJavaScript(`(async()=>{
+    const el=id=>document.getElementById(id),room=${JSON.stringify(pauseRoom)};
+    for(let n=0;n<2;n++){
+      const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;canvas.getContext('2d').fillRect(0,0,640,360);
+      const capture=canvas.captureStream(5);window.uiSmokeTrack=capture.getVideoTracks()[0];
+      navigator.mediaDevices.getDisplayMedia=async()=>capture;
+      el('start-share').click();const until=Date.now()+5000;
+      while(el('stop-share').disabled||el('local-preview').srcObject!==capture){if(Date.now()>until)throw new Error('Resume did not install new capture');await new Promise(r=>setTimeout(r,20));}
+      if(el('room-code').textContent!==room||el('desktop-status').textContent!=='P2P 已加密直连')throw new Error('Resume replaced room');
+      if(n===0){uiSmokeTrack.stop();uiSmokeTrack.dispatchEvent(new Event('ended'));if(el('local-preview').srcObject)throw new Error('System stop kept capture');}
+    }
+  })()`);
+  await phone.webContents.executeJavaScript(`(async()=>{
+    const until=Date.now()+5000;while(!document.getElementById('remote-preview').srcObject?.getVideoTracks().length){if(Date.now()>until)throw new Error('Phone did not resume video');await new Promise(r=>setTimeout(r,20));}
   })()`);
   await win.webContents.executeJavaScript(`(async()=>{
     const el=id=>document.getElementById(id);el('take-region-shot').click();
@@ -185,7 +219,7 @@ app.whenReady().then(async () => {
   await new Promise(resolve => picker.webContents.once('did-finish-load', resolve));
   await picker.webContents.executeJavaScript(`(async()=>{const until=Date.now()+5000;while(!document.querySelector('.source img')?.naturalWidth){if(Date.now()>until)throw new Error('Picker thumbnail did not load');await new Promise(r=>setTimeout(r,20));}if(document.querySelector('.source strong').textContent!=='测试窗口 <本地>')throw new Error('Picker name differs');})()`);
   await picker.webContents.capturePage(); await new Promise(resolve => setTimeout(resolve, 150));
-  await fs.writeFile(path.join(root, 'release', 'ui-qa', 'capture-picker.png'), (await picker.webContents.capturePage()).toPNG());
+  await fs.writeFile(path.join(output, 'capture-picker.png'), (await picker.webContents.capturePage()).toPNG());
   // The click resolves IPC in the main process; the picker then closes itself.
   void picker.webContents.executeJavaScript("document.querySelector('.source').click()").catch(() => {});
   if (await selection !== source) throw new Error('Picker selection did not reach the main process');
@@ -203,8 +237,8 @@ app.whenReady().then(async () => {
     if (document.documentElement.scrollWidth>window.innerWidth) throw new Error('Phone layout overflows');
     return {captureStopped:true,phoneLayoutFits:true,regionCancelledOnRoleChange:true};
   })()`);
-  await fs.writeFile(path.join(root, 'release', 'ui-qa', 'mobile.png'), await captureRendered());
-  console.log(JSON.stringify({ ...result, ...receipt, ...pixels, ...diagnostic, ...sourceSwitch, thumbnailPicker:true, regionCancel:true,invalidImageRejected:true, ...mobile }));
+  await fs.writeFile(path.join(output, 'mobile.png'), await captureRendered());
+  console.log(JSON.stringify({ ...result, ...receipt, ...pixels, ...diagnostic, ...sourceSwitch, pauseKeepsRoomAndAnswers:true, pauseClearsPhoneMedia:true, cancelResumeKeepsRoom:true, repeatedAndSystemStop:true, thumbnailPicker:true, regionCancel:true,invalidImageFailureShown:true, ...mobile }));
   clearTimeout(timeout); phone.destroy(); win.destroy();
   for (const socket of signaling.wss.clients) socket.terminate();
   signaling.wss.close(); signaling.server.close(); ui.close(); app.exit(0);

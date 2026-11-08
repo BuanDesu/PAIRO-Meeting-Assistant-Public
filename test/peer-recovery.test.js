@@ -48,6 +48,23 @@ test('a dropped signaling socket rejoins the same room and explicit leave preven
   assert.equal(service.rooms.size, 0);
 });
 
+test('a long outage continues low-frequency retries and explicit leave cancels them', async t => {
+  const { peer } = await fixture(t);
+  peer.retryBaseMs = 1; peer.maxReconnectAttempts = 1; peer.retryCooldownMs = 15;
+  let attempts = 0;
+  peer.openSignal = async () => {
+    attempts++;
+    if (attempts < 3) throw new Error('offline');
+    peer.signal = { readyState: WebSocket.OPEN, send() {}, close() {} };
+    peer.report('waiting', 'rejoined');
+  };
+  peer.scheduleReconnect(0);
+  await until(() => attempts === 3 && peer.phase === 'waiting');
+  peer.disconnect();
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(attempts, 3);
+});
+
 test('negotiation timeouts request bounded recovery and disconnect clears all timers', async t => {
   const { peer } = await fixture(t);
   const sent = [];

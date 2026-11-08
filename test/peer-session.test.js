@@ -59,12 +59,14 @@ test('concurrent initialization shares one connection and peer departure invalid
 test('capture replacement uses existing senders and rolls back a failed audio replacement without reopening the room', async t => {
   const { peer } = peerFixture(t);
   const oldVideo = { kind: 'video' }, oldAudio = { kind: 'audio' }, newVideo = { kind: 'video' }, newAudio = { kind: 'audio' };
-  const stream = tracks => ({ getTracks: () => tracks });
+  const stream = tracks => ({ getVideoTracks: () => tracks.filter(t => t.kind === 'video'), getAudioTracks: () => tracks.filter(t => t.kind === 'audio') });
   const changes = [];
   const video = { track: oldVideo, async replaceTrack(track) { changes.push(track); this.track = track; } };
   let failAudio = true;
   const audio = { track: oldAudio, async replaceTrack(track) { if (failAudio) throw new Error('audio failed'); this.track = track; } };
-  peer.pc = { getSenders: () => [video, audio], close() {} };
+  const secondAudio = { track: null, async replaceTrack(track) { this.track = track; } };
+  peer.pc = { close() {} };
+  peer.localSlots = [video, audio, secondAudio].map(sender => ({ sender }));
   peer.localStream = stream([oldVideo, oldAudio]); const previous = peer.localStream;
   peer.room = 'EXISTING'; const pc = peer.pc;
   await assert.rejects(peer.replaceLocalStream(stream([newVideo, newAudio])), /audio failed/);
@@ -74,6 +76,29 @@ test('capture replacement uses existing senders and rolls back a failed audio re
   const next = stream([newVideo, newAudio]); await peer.replaceLocalStream(next);
   assert.equal(peer.localStream, next); assert.equal(video.track, newVideo); assert.equal(audio.track, newAudio);
   assert.equal(peer.pc, pc); assert.equal(peer.room, 'EXISTING');
-  await assert.rejects(peer.replaceLocalStream(stream([newVideo])), /轨道已变化/);
-  assert.equal(peer.localStream, next);
+  const videoOnly = stream([newVideo]); await peer.replaceLocalStream(videoOnly);
+  assert.equal(peer.localStream, videoOnly); assert.equal(audio.track, null);
+  await peer.replaceLocalStream(null);
+  assert.equal(peer.localStream, null); assert.equal(video.track, null);
+  await peer.replaceLocalStream(stream([oldVideo, oldAudio, newAudio]));
+  assert.equal(secondAudio.track, newAudio); assert.equal(peer.pc, pc);
+});
+
+test('pause invalidates an in-flight sender replacement and disconnect cannot resurrect media', async t => {
+  const { peer } = peerFixture(t);
+  const video = { kind: 'video' }, stream = { getVideoTracks: () => [video], getAudioTracks: () => [] };
+  let release;
+  const sender = { track: null, async replaceTrack(track) { if (track) await new Promise(resolve => { release = resolve; }); this.track = track; } };
+  peer.pc = { close() {} }; peer.localSlots = [{ sender }];
+  const resume = peer.replaceLocalStream(stream);
+  await new Promise(resolve => setImmediate(resolve));
+  const pause = peer.replaceLocalStream(null);
+  assert.equal(peer.localStream, null);
+  release();
+  assert.equal(await resume, false); assert.equal(await pause, true);
+  assert.equal(sender.track, null); assert.equal(peer.localStream, null);
+  const late = peer.replaceLocalStream(stream);
+  await new Promise(resolve => setImmediate(resolve));
+  peer.disconnect(); release();
+  assert.equal(await late, false); assert.equal(peer.localStream, null); assert.equal(peer.pc, null);
 });

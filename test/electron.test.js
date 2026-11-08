@@ -27,6 +27,10 @@ test('release-page IPC accepts only the app main frame and always uses a fixed H
   frame.url = 'https://untrusted.example/';
   assert.throws(() => open({ sender: contents, senderFrame: frame }), /Untrusted/);
   assert.equal(opened.length, 1);
+  // Every filesystem/model entry point shares the same trusted-main-frame guard.
+  for (const name of ['desktop:model-run', 'desktop:model-cancel', 'desktop:knowledge-list', 'desktop:knowledge-update', 'desktop:knowledge-remove', 'desktop:knowledge-search', 'desktop:knowledge-cancel']) {
+    assert.throws(() => handlers.get(name)({ sender: {}, senderFrame: frame }, {}), /Untrusted/);
+  }
 });
 
 test('allows legacy and modern display permission while separating microphone and camera', () => {
@@ -41,6 +45,8 @@ test('allows legacy and modern display permission while separating microphone an
 });
 
 test('preferences survive store recreation and never persist API keys', async t => {
+  assert.equal(preferences.sanitizePreferences({ endpoint: 'https://user:secret@fixture.test/chat' }).endpoint, '');
+  assert.equal(preferences.sanitizePreferences({ endpoint: 'https://fixture.test/chat?api_key=secret' }).endpoint, '');
   const directory = await mkdtemp(join(tmpdir(), 'pairo-preferences-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const first = preferences.createPreferencesStore(directory);

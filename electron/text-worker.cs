@@ -104,7 +104,15 @@ public static class PairoTextWorker {
     }
     static object Execute(Dictionary<string, object> command) {
         string action = (string)command["action"];
-        if (action == "bindings") { PairoNumpadHook.Configure((object[])command["bindings"]); return new { configured = true }; }
+        if (action == "bindings") {
+            // JavaScriptSerializer can produce an ArrayList for a nested JSON array.
+            // Normalize the wire representation before passing it to the hook.
+            var items = command["bindings"] as System.Collections.IList;
+            if (items == null) throw new Exception("input");
+            var values = new object[items.Count]; items.CopyTo(values, 0);
+            PairoNumpadHook.Configure(values);
+            return new { configured = true };
+        }
         if (action == "copy") return new { text = Selection() };
         if (action == "arm") {
             target = GetForegroundWindow(); focus = AutomationElement.FocusedElement;

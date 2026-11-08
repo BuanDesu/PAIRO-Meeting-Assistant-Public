@@ -47,7 +47,7 @@ export class CompletionStream {
     const delta = typeof content === 'string' ? content : Array.isArray(content)
       ? content.filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('') : '';
     if (delta) {
-      if (this.text.length + delta.length > 100000) throw new Error('回答过长，请缩小问题范围后重试');
+      if (this.text.length + delta.length > 24000) throw new Error('回答过长，请缩小问题范围后重试');
       this.text += delta;
       this.onText(this.text);
     }

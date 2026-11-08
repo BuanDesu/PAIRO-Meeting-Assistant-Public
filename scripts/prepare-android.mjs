@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, copyFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { verifyReleaseVersion } from './release-version.mjs';
 
@@ -14,9 +14,10 @@ if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;
 if (process.exitCode === 0) {
   const nativeDir = resolve(androidDir, 'app', 'src', 'main', 'java', 'com', 'pairo', 'meetingcopilot');
-  for (const file of ['MainActivity.java', 'ModelStreamPlugin.java']) {
+  for (const file of ['MainActivity.java']) {
     copyFileSync(resolve(root, 'native', 'android', file), resolve(nativeDir, file));
   }
+  rmSync(resolve(nativeDir, 'ModelStreamPlugin.java'), { force: true });
   const version = verifyReleaseVersion(
     JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')),
     JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8')),

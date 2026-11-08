@@ -14,10 +14,12 @@ export function buildProvenance(root = process.cwd(), env = process.env) {
   const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
   const lock = JSON.parse(readFileSync(resolve(root, 'package-lock.json'), 'utf8'));
   const version = verifyReleaseVersion(pkg, lock, env.GITHUB_REF || '');
+  const repository = git('remote', 'get-url', 'origin').replace(/\.git$/, '');
+  if (!['https://github.com/BuanDesu/PAIRO-Meeting-Assistant', 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant-Public'].includes(repository)) throw new Error('Unverified build source repository');
   return {
     schemaVersion: 1,
     ...version,
-    sourceRepository: 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant-Public',
+    sourceRepository: repository,
     sourceCommit: commit,
     components: {
       electron: lock.packages['node_modules/electron'].version,

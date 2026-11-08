@@ -120,7 +120,7 @@ function createTextAutomation({ globalShortcut, onStatus = () => {}, onShortcut 
       try {
         const value = await command('arm');
         if (!active) throw new Error('已取消回答键入');
-        status('等待手机最新完整回答；Esc 可取消');
+        status('已就绪，即将键入电脑的最新完整回答；Esc 可取消');
         return value.token;
       } catch (error) { release(); throw error; }
     },

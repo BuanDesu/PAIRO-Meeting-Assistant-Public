@@ -3,7 +3,8 @@ const { createServer } = require('node:http');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const root = path.resolve(__dirname, '..'), dist = path.join(root, 'dist'), output = path.join(root, 'release/xp-qa');
+const root = path.resolve(__dirname, '..'), dist = path.join(root, 'dist'), output = path.resolve(root, process.env.PAIRO_QA_OUTPUT || 'release/xp-qa');
+if (process.env.PAIRO_QA_OUTPUT) app.setPath('userData', path.join(output, 'profile'));
 const deadline = setTimeout(() => { console.error('Workspace smoke timed out'); app.exit(1); }, 60000);
 app.disableHardwareAcceleration();
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
@@ -66,34 +67,36 @@ app.whenReady().then(async () => {
   await wait(() => evaluate(desktop, `!document.getElementById('pairing-approval').hidden`), 'approval');
   await evaluate(desktop, `document.getElementById('allow-peer').click()`);
   await wait(() => evaluate(phone, `document.getElementById('mobile-status').textContent==='P2P 已加密直连'`), 'connected');
+  await evaluate(phone, `window.fetch=async()=>{throw new Error('Phone must never call a model')};true`);
   // All AI calls are intercepted in this isolated page; no external Key or provider is involved.
-  await evaluate(phone, `window.qaQuestions=[];window.fetch=async(url,options)=>{const body=JSON.parse(options.body);qaQuestions.push(body);return new Response(JSON.stringify({choices:[{message:{content:'建议先说明目标，再给出两项具体行动。\\n\\n第一，集中讨论最重要的问题。第二，明确负责人和下一步时间。'}}]}),{headers:{'Content-Type':'application/json'}});};document.getElementById('llm-key').value='isolated-fixture-key';document.getElementById('auto-answer').checked=false;`);
+  await evaluate(desktop, `window.qaQuestions=[];window.qaOriginalFetch=window.fetch;window.fetch=async(url,options)=>{if(!options?.body)return qaOriginalFetch(url,options);const body=JSON.parse(options.body);qaQuestions.push(body);return new Response(JSON.stringify({choices:[{message:{content:'建议先说明目标，再给出两项具体行动。\\n\\n第一，集中讨论最重要的问题。第二，明确负责人和下一步时间。'}}]}),{headers:{'Content-Type':'application/json'}});};document.getElementById('llm-key').value='isolated-fixture-key';`);
   await evaluate(desktop, `document.getElementById('screenshot-question').value='请回答图中的问题。';document.getElementById('take-shot').click();`);
-  await wait(() => evaluate(phone, `document.querySelectorAll('.chat-message.answer').length===1`), 'automatic screenshot question');
-  const checks = await evaluate(phone, `(()=>{const request=qaQuestions[0],content=request.messages.at(-1).content;if(content[0].text!=='请回答图中的问题。'||content[1].type!=='image_url')throw new Error('Question and screenshot were not paired');if(document.getElementById('mobile-chat-page').hidden)throw new Error('Phone did not open assistant');return {screenshotAutoQuestion:true,phoneOnlyAnswer:true};})()`);
+  await wait(() => evaluate(phone, `document.querySelectorAll('.chat-message.answer[data-status=complete]').length===1`), 'automatic screenshot question');
+  const checks = await evaluate(desktop, `(()=>{const request=qaQuestions[0],content=request.messages.at(-1).content;if(content[0].text!=='请回答图中的问题。'||content[1].type!=='image_url')throw new Error('Question and screenshot were not paired');return {screenshotAutoQuestion:true,pcOnlyModel:true};})()`);
   await evaluate(desktop, `if(document.getElementById('desktop-answer').textContent)throw new Error('Answer reached desktop');if(document.getElementById('toast').classList.contains('show'))throw new Error('Desktop toast surfaced');`);
   desktop.webContents.send('ui-smoke-shortcut', 'type-answer');
   await wait(() => typedAnswers.length === 1, 'explicit screenshot answer retrieval');
   desktop.webContents.send('ui-smoke-shortcut', 'text');
-  await wait(() => evaluate(phone, `qaQuestions.length===2&&document.querySelectorAll('.chat-message.answer').length===2`), 'selected text auto question');
-  await evaluate(phone, `(()=>{const content=qaQuestions[1].messages.at(-1).content;if(content.length!==1||content[0].type!=='text'||!content[0].text.includes('selected questionnaire'))throw new Error('Selection accidentally attached stale screenshot');})()`);
+  await wait(() => evaluate(desktop, `qaQuestions.length===2`), 'selected text auto question');
+  await wait(() => evaluate(phone, `document.querySelectorAll('.chat-message.answer[data-status=complete]').length===2`), 'second answer synchronized');
+  await evaluate(desktop, `(()=>{const content=qaQuestions[1].messages.at(-1).content;if(content.length!==1||content[0].type!=='text'||!content[0].text.includes('selected questionnaire'))throw new Error('Selection accidentally attached stale screenshot');})()`);
   desktop.webContents.send('ui-smoke-shortcut', 'type-answer');
   await wait(() => typedAnswers.length === 2, 'explicit text answer retrieval');
   if (typedAnswers.some(value => !value.includes('两项具体行动'))) throw new Error('Wrong phone answer retrieved');
   await evaluate(desktop, `document.getElementById('typing-chinese').value='100';document.getElementById('typing-english').value='120';document.getElementById('typing-settings-form').requestSubmit();`);
   await wait(() => rates.chineseCpm === 100 && rates.englishWpm === 120, 'typing speed settings');
   checks.selectedTextAutoQuestion = true; checks.explicitAnswerRetrieval = true; checks.typingSettings = true;
-  for (const page of ['pair', 'source', 'keys']) {
+  for (const page of ['pair', 'source', 'keys', 'assistant', 'knowledge']) {
     await evaluate(desktop, `document.getElementById('desktop-nav-${page}').click();if(document.getElementById('room-code').textContent!==${JSON.stringify(room)})throw new Error('Navigation replaced room');`);
     await snapshot(desktop, 'desktop-' + page);
   }
-  for (const page of ['pair', 'api', 'chat']) {
+  for (const page of ['pair', 'chat']) {
     await evaluate(phone, `document.getElementById('mobile-nav-${page}').click();`);
     const fit = await evaluate(phone, `(()=>{if(document.documentElement.scrollWidth>innerWidth)throw new Error('Portrait page overflows');const nav=document.querySelector('#mobile-view .bottom-nav').getBoundingClientRect();if(nav.bottom>innerHeight+1)throw new Error('Navigation is below viewport: '+JSON.stringify({bottom:nav.bottom,viewport:innerHeight}));return true;})()`);
     if (!fit) throw new Error('Phone layout did not fit');
     await snapshot(phone, 'mobile-' + page);
   }
-  const layout = await evaluate(phone, `(()=>{const list=document.getElementById('message-list').getBoundingClientRect(),composer=document.getElementById('composer').getBoundingClientRect();if(list.height<innerHeight*.50||composer.height>60)throw new Error('Chat does not prioritize reading: '+JSON.stringify({list:list.height,composer:composer.height,viewport:innerHeight}));return {chatHeight:Math.round(list.height),composerHeight:Math.round(composer.height),viewportHeight:innerHeight};})()`);
+  const layout = await evaluate(phone, `(()=>{const list=document.getElementById('message-list').getBoundingClientRect();if(list.height<innerHeight*.60||document.querySelector('#mobile-view #composer')||document.querySelector('#mobile-view #llm-key'))throw new Error('Phone is not a pure reader');return {chatHeight:Math.round(list.height),viewportHeight:innerHeight};})()`);
   const safeAreas = await evaluate(phone, `(()=>{const root=document.documentElement;try{root.style.setProperty('--safe-area-inset-top','24px');root.style.setProperty('--safe-area-inset-bottom','16px');const title=document.querySelector('.topbar').getBoundingClientRect(),nav=document.querySelector('#mobile-view .bottom-nav').getBoundingClientRect();if(title.top<24||nav.bottom>innerHeight-15)throw new Error('System bars overlap the workspace');return true;}finally{root.style.removeProperty('--safe-area-inset-top');root.style.removeProperty('--safe-area-inset-bottom');}})()`);
   // Loading the production worklet is part of the check; this catches build URL/CSP failures.
   const worklet = await evaluate(desktop, `(async()=>{const ctx=new AudioContext({sampleRate:16000});const source=await fetch('/').then(r=>r.text());const entry=source.match(/src="([^\"]+assets[^\"]+\.js)"/)[1];const bundle=await fetch(entry).then(r=>r.text());const uri=bundle.match(new RegExp('data:(?:text|application)/javascript;base64,[A-Za-z0-9+/=]+'))?.[0];if(!uri)throw new Error('Production worklet missing');await ctx.audioWorklet.addModule(uri);const processor=new AudioWorkletNode(ctx,'pairo-voice-chunks');processor.disconnect();await ctx.close();return true;})()`);

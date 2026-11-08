@@ -4,13 +4,17 @@ const fs = require('node:fs/promises');
 const fsSync = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { createServer } = require('node:http');
-const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell, Tray, Menu, nativeImage, net } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, dialog, globalShortcut, ipcMain, shell, Tray, Menu, nativeImage } = require('electron');
 const { isTrustedUiUrl, mediaPermissionKind } = require('./security.cjs');
 const { createPreferencesStore } = require('./preferences.cjs');
 const { lanAddresses } = require('./network.cjs');
 const { showCapturePicker } = require('./capture-picker.cjs');
 const { createShortcutManager } = require('./shortcuts.cjs');
 const { createOfflineSpeech } = require('./offline-speech.cjs');
+const { createModelService } = require('./model-service.cjs');
+const modelService = createModelService({ root: app.getAppPath() });
+const { createKnowledgeService } = require('./knowledge-service.cjs');
+let knowledge;
 const { DEFAULT_TYPING, validateTyping, createTextAutomation } = require('./text-automation.cjs');
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || (app.isPackaged ? path.dirname(app.getPath('exe')) : '');
@@ -230,7 +234,7 @@ async function createWindow() {
     try { updateGlobalShortcuts(); }
     catch (error) { mainWindow?.webContents.send('desktop-shortcut-error', error.message); }
   });
-  mainWindow.webContents.on('render-process-gone', () => { meetingActive = false; shortcutManager.clear(); offlineSpeech.cancel(); textAutomation?.cancel(); textAutomation?.setBindings({ enabled: false }); });
+  mainWindow.webContents.on('render-process-gone', () => { knowledge?.cancel(); modelService.dispose(); meetingActive = false; shortcutManager.clear(); offlineSpeech.cancel(); textAutomation?.cancel(); textAutomation?.setBindings({ enabled: false }); });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!isTrustedUiUrl(url, uiOrigin())) event.preventDefault();
@@ -249,6 +253,25 @@ ipcMain.handle('desktop:signal-info', event => {
     registeredShortcuts,
   };
 });
+ipcMain.handle('desktop:model-run', (event, value) => {
+  requireTrustedIpc(event);
+  return modelService.run(event.sender.id, value, message => {
+    if (!event.sender.isDestroyed()) event.sender.send('desktop-model-partial', message);
+  });
+});
+ipcMain.handle('desktop:model-cancel', (event, id) => { requireTrustedIpc(event); modelService.cancel(event.sender.id, id); });
+ipcMain.handle('desktop:knowledge-list', event => { requireTrustedIpc(event); return knowledge.list(); });
+ipcMain.handle('desktop:knowledge-choose', async event => {
+  requireTrustedIpc(event);
+  const result = await dialog.showOpenDialog(mainWindow, { title: '选择要添加到知识库的目录', properties: ['openDirectory'] });
+  return result.canceled ? knowledge.list() : knowledge.add(result.filePaths[0]);
+});
+ipcMain.handle('desktop:knowledge-update', (event, value) => {
+  requireTrustedIpc(event); return knowledge.update(value?.id, { endpoint: value?.config?.endpoint, model: value?.config?.model, apiKey: value?.config?.apiKey });
+});
+ipcMain.handle('desktop:knowledge-remove', (event, value) => { requireTrustedIpc(event); return knowledge.remove(value?.id, value?.fileId); });
+ipcMain.handle('desktop:knowledge-cancel', event => { requireTrustedIpc(event); knowledge.cancel(); });
+ipcMain.handle('desktop:knowledge-search', (event, value) => { requireTrustedIpc(event); return knowledge.search(value?.question, value?.previousQuestion); });
 ipcMain.handle('desktop:preferences-read', event => {
   requireTrustedIpc(event);
   return preferencesStore.read();
@@ -312,8 +335,9 @@ ipcMain.handle('desktop:shortcuts-write', (event, value) => {
   shortcutWrites = update; return update;
 });
 ipcMain.handle('desktop:speech-status', event => { requireTrustedIpc(event); return offlineSpeech.status(); });
+ipcMain.handle('desktop:speech-settings-write', (event, value) => { requireTrustedIpc(event); return offlineSpeech.configure(value); });
 ipcMain.handle('desktop:speech-install', event => { requireTrustedIpc(event); return offlineSpeech.install(); });
-ipcMain.handle('desktop:speech-transcribe', (event, pcm) => { requireTrustedIpc(event); return offlineSpeech.transcribe(pcm); });
+ipcMain.handle('desktop:speech-transcribe', (event, pcm, source) => { requireTrustedIpc(event); return offlineSpeech.transcribe(pcm, source); });
 ipcMain.handle('desktop:speech-cancel', event => { requireTrustedIpc(event); offlineSpeech.cancel(); });
 
 app.whenReady().then(async () => {
@@ -321,6 +345,17 @@ app.whenReady().then(async () => {
   try {
     app.setAppUserModelId('com.pairo.meetingcopilot');
     preferencesStore = createPreferencesStore(app.getPath('userData'));
+    knowledge = createKnowledgeService({ dataDirectory: app.getPath('userData'), root: app.getAppPath(),
+      onProgress: progress => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-knowledge-progress', progress); },
+      ask: async options => {
+        const { signal, ...request } = options, id = require('node:crypto').randomUUID();
+        const abort = () => modelService.cancel('knowledge', id);
+        signal?.throwIfAborted(); signal?.addEventListener('abort', abort, { once: true });
+        try {
+          const result = await modelService.run('knowledge', { ...request, id });
+          signal?.throwIfAborted(); if (result.error) throw new Error(result.error); return result.text;
+        } finally { signal?.removeEventListener('abort', abort); }
+      } });
     try { typingSettings = validateTyping(JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'typing-settings.json'), 'utf8'))); } catch { /* Use defaults for missing/invalid settings. */ }
     textAutomation = createTextAutomation({ globalShortcut, onShortcut: action => {
       if (meetingActive && shortcutManager?.snapshot().enabled && mainWindow && !mainWindow.isDestroyed() && !mainWindow.isFocused()) mainWindow.webContents.send('desktop-shortcut', action);
@@ -334,7 +369,10 @@ app.whenReady().then(async () => {
       dispatch: action => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('desktop-shortcut', action); } });
     try { const saved = JSON.parse(await fs.readFile(path.join(app.getPath('userData'), 'shortcuts.json'), 'utf8')); shortcutManager.update({ ...saved, active: false }); }
     catch { /* Missing or invalid settings use disabled defaults. */ }
-    offlineSpeech = createOfflineSpeech(app.getPath('userData'), { fetchImpl: (...args) => net.fetch(...args) }); await offlineSpeech.initialize();
+    // Node fetch exposes manual redirect responses so the offline installer
+    // can check each destination before following it. Electron net.fetch can
+    // cancel manual redirects from the model hosts before returning headers.
+    offlineSpeech = createOfflineSpeech(app.getPath('userData')); await offlineSpeech.initialize();
     configureMediaPermissions();
     configureDisplayCapture();
     await startServices();
@@ -351,6 +389,8 @@ app.on('activate', async () => {
 });
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
+  knowledge?.cancel();
+  modelService.dispose();
   quitting = true;
   offlineSpeech?.cancel();
   textAutomation?.dispose();

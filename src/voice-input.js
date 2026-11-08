@@ -1,46 +1,56 @@
-// No speaker connection: the zero-gain worklet output only keeps processing alive.
-// Each source is independently downmixed by Web Audio before being mixed together.
+import { VoiceQueue } from './voice-queue.js';
+
+// Tracks are independently downmixed and filtered. Zero gain keeps worklets
+// running without playing captured audio on the PC.
 export class OfflineVoiceInput {
   constructor({ transcribe, onText, onStatus, onError }) {
     Object.assign(this, { transcribe, onText, onStatus, onError });
-    this.generation = 0; this.running = false; this.pending = 0; this.queue = Promise.resolve();
+    this.generation = 0; this.running = false; this.sources = [];
   }
-  async start(tracks) {
+  async start(inputs) {
     const generation = ++this.generation;
     this.running = true;
     try {
       this.context = new AudioContext({ sampleRate: 16000 });
       await this.context.audioWorklet.addModule(new URL('./voice-worklet.js', import.meta.url));
       if (generation !== this.generation) return;
-      this.processor = new AudioWorkletNode(this.context, 'pairo-voice-chunks', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
-      const mixer = this.context.createGain(); mixer.gain.value = 1 / Math.max(1, tracks.length);
-      this.sources = tracks.map(track => {
-        const source = this.context.createMediaStreamSource(new MediaStream([track]));
-        source.connect(mixer); return source;
+      this.queue = new VoiceQueue({
+        transcribe: this.transcribe, onText: this.onText, onStatus: this.onStatus, onError: this.onError,
+        onFull: () => {
+          this.disconnectInputs();
+          this.onStatus('转写积压，已暂停收听；超出容量的片段未接收，正在处理已排队内容');
+        },
+        onDrained: () => this.onError(new Error('积压内容已处理，语音输入已停止；可选轻量档或减少同时发言的音源后重试')),
       });
-      mixer.connect(this.processor);
       this.silent = this.context.createGain(); this.silent.gain.value = 0;
-      this.processor.connect(this.silent); this.silent.connect(this.context.destination);
-      this.processor.port.onmessage = ({ data }) => {
-        if (!this.running || generation !== this.generation) return;
-        // A bounded queue prevents stale speech accumulating when inference is slower than capture.
-        if (this.pending >= 3) { this.onError(new Error('离线转写跟不上音频速度，已停止；请减少其他电脑负载后重试')); return; }
-        this.pending += 1;
-        this.queue = this.queue.then(async () => {
-          if (!this.running || generation !== this.generation) return;
-          this.onStatus('本机正在转写…');
-          const text = await this.transcribe(data);
-          if (this.running && generation === this.generation && text?.trim()) this.onText(text.trim());
-        }).catch(error => { if (generation === this.generation) this.onError(error); })
-          .finally(() => { this.pending -= 1; });
-      };
+      this.silent.connect(this.context.destination);
+      this.sources = inputs.map(({ track, source: name }) => {
+        const source = this.context.createMediaStreamSource(new MediaStream([track]));
+        const highpass = this.context.createBiquadFilter();
+        highpass.type = 'highpass'; highpass.frequency.value = 75;
+        // Biquad highpass Q is expressed in dB: -3.01 dB corresponds to 1/√2.
+        highpass.Q.value = -3.0103;
+        const processor = new AudioWorkletNode(this.context, 'pairo-voice-chunks', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit' });
+        source.connect(highpass); highpass.connect(processor); processor.connect(this.silent);
+        processor.port.onmessage = ({ data }) => {
+          if (this.running && generation === this.generation) this.queue.push({ ...data, source: name });
+        };
+        return { source, highpass, processor };
+      });
       await this.context.resume();
     } catch (error) { await this.stop(); throw error; }
   }
+  disconnectInputs() {
+    for (const { source, highpass, processor } of this.sources) {
+      processor.port.onmessage = null;
+      source.disconnect(); highpass.disconnect(); processor.disconnect();
+    }
+    this.sources = [];
+  }
   async stop() {
-    this.running = false; this.generation += 1;
-    if (this.processor) { this.processor.port.onmessage = null; this.processor.disconnect(); }
-    this.sources?.forEach(source => source.disconnect()); this.silent?.disconnect();
+    this.running = false; this.generation++;
+    this.queue?.cancel();
+    this.disconnectInputs(); this.silent?.disconnect();
     const context = this.context; this.context = null;
     if (context && context.state !== 'closed') await context.close();
     // The shared capture tracks belong to the meeting and must not be stopped here.

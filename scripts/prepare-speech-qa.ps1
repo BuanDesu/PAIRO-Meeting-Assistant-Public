@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$taskQaDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) 'release/xp-qa'
+$taskQaDirectory = if ($env:PAIRO_QA_OUTPUT) { [IO.Path]::GetFullPath($env:PAIRO_QA_OUTPUT) } else { Join-Path (Split-Path $PSScriptRoot -Parent) 'release/xp-qa' }
 New-Item -ItemType Directory -Force -Path $taskQaDirectory | Out-Null
 Add-Type -AssemblyName System.Speech
 $taskSynth = New-Object System.Speech.Synthesis.SpeechSynthesizer

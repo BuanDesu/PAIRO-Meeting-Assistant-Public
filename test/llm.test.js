@@ -43,33 +43,11 @@ test('rejects a cleartext remote endpoint before sending the key', async t => {
     /HTTPS/,
   );
 });
-
-
-test('uses Capacitor native HTTP on Android instead of browser fetch', async () => {
-  let sent;
-  const response = await requestModel({
-    url: 'https://llm.example/v1/chat/completions',
-    headers: { Authorization: 'Bearer temporary-test-key' },
-    body: { model: 'vision-model' },
-    isNative: true,
-    nativeHttp: { post: async options => { sent = options; return { status: 200, data: { choices: [] } }; } },
-    fetchImpl: async () => { throw new Error('browser fetch should not be used'); },
-  });
-  assert.equal(sent.url, 'https://llm.example/v1/chat/completions');
-  assert.equal(sent.data.model, 'vision-model');
-  assert.equal(response.ok, true);
-  assert.deepEqual(await response.json(), { choices: [] });
+test('rejects credentials embedded in URLs and bounds JSON replies', async () => {
+  await assert.rejects(askModel({ endpoint: 'https://llm.example/chat?api_key=secret', apiKey: 'test', model: 'm' }), /凭据/);
+  await assert.rejects(askModel({ endpoint: 'https://llm.example/chat', apiKey: 'test', model: 'm', fetchImpl: async () => new Response('x'.repeat(2 * 1024 * 1024 + 1)) }), /响应过大/);
 });
 
-test('cancels native requests even if the native provider returns late', async () => {
-  const controller = new AbortController();
-  let finish;
-  const request = requestModel({ url: 'https://llm.example', body: {}, headers: {}, signal: controller.signal,
-    isNative: true, nativeHttp: { post: () => new Promise(resolve => { finish = resolve; }) } });
-  controller.abort();
-  await assert.rejects(request, { name: 'AbortError' });
-  finish({ status: 200, data: {} });
-});
 
 test('times out browser requests and rejects pre-cancelled requests without sending keys', async t => {
   const original = globalThis.fetch;

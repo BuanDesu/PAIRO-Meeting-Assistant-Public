@@ -3,6 +3,15 @@ def pairoVersion = new groovy.json.JsonSlurper().parse(new File(rootProject.proj
 android.defaultConfig.versionName = pairoVersion.version
 android.defaultConfig.versionCode = pairoVersion.androidVersionCode
 
+// Opt-in parallel debug build; release and the standard debug ID are untouched.
+if (System.getenv('PAIRO_ANDROID_QA') == '1') {
+    android.buildTypes.debug.applicationIdSuffix = '.qa'
+    android.buildTypes.debug.resValue 'string', 'app_name', "Pairo QA ${pairoVersion.version}"
+    android.buildTypes.debug.resValue 'string', 'title_activity_main', "Pairo QA ${pairoVersion.version}"
+}
+def pairoBuildOutput = System.getenv('PAIRO_ANDROID_BUILD_OUTPUT')
+if (pairoBuildOutput) layout.buildDirectory.set(file(pairoBuildOutput))
+
 def signingFile = System.getenv('PAIRO_ANDROID_KEYSTORE')
 def signingPassword = System.getenv('PAIRO_ANDROID_STORE_PASSWORD')
 def signingAlias = System.getenv('PAIRO_ANDROID_KEY_ALIAS')

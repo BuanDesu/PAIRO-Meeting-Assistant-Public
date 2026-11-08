@@ -9,6 +9,7 @@ const electronBuilder = require('electron-builder');
 const root = process.cwd();
 if (process.platform !== 'win32') throw new Error('The portable EXE target must be built on Windows.');
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+if (process.env.PAIRO_BUILD_OUTPUT) pkg.build.directories.output = process.env.PAIRO_BUILD_OUTPUT;
 const electronVersion = require('electron/package.json').version;
 const cacheRoot = process.env.LOCALAPPDATA ? resolve(process.env.LOCALAPPDATA, 'PairoMeetingCopilot', 'Cache') : resolve(root, '.electron-cache');
 const electronZip = process.env.ELECTRON_DIST || resolve(cacheRoot, 'electron-v' + electronVersion + '-win32-x64.zip');

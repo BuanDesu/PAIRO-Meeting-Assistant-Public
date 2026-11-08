@@ -10,6 +10,9 @@ if (!existsSync(androidDir)) {
 }
 const windows = process.platform === 'win32';
 const release = process.argv.includes('--release');
+const qa = process.argv.includes('--qa');
+if (release && qa) throw new Error('QA builds must use debug signing');
+const output = process.env.PAIRO_ANDROID_BUILD_OUTPUT ? resolve(root, process.env.PAIRO_ANDROID_BUILD_OUTPUT) : '';
 if (release) {
   for (const name of ['PAIRO_ANDROID_KEYSTORE', 'PAIRO_ANDROID_STORE_PASSWORD', 'PAIRO_ANDROID_KEY_ALIAS', 'PAIRO_ANDROID_KEY_PASSWORD']) {
     if (!process.env[name]) throw new Error('Release signing configuration is missing: ' + name);
@@ -17,12 +20,13 @@ if (release) {
   if (!existsSync(process.env.PAIRO_ANDROID_KEYSTORE)) throw new Error('Release keystore does not exist');
 }
 const command = resolve(androidDir, windows ? 'gradlew.bat' : 'gradlew');
-const result = spawnSync(command, [release ? 'assembleRelease' : 'assembleDebug'], { cwd: androidDir, stdio: 'inherit', shell: windows });
+const result = spawnSync(command, [release ? 'assembleRelease' : 'assembleDebug'], { cwd: androidDir, stdio: 'inherit', shell: windows,
+  env: { ...process.env, PAIRO_ANDROID_QA: qa ? '1' : '0', PAIRO_ANDROID_BUILD_OUTPUT: output } });
 if (result.error) throw result.error;
 process.exitCode = result.status ?? 1;
 if (process.exitCode === 0) {
   const variant = release ? 'release' : 'debug';
-  const apk = resolve(androidDir, 'app', 'build', 'outputs', 'apk', variant, `app-${variant}.apk`);
+  const apk = resolve(output || resolve(androidDir, 'app', 'build'), 'outputs', 'apk', variant, `app-${variant}.apk`);
   if (!existsSync(apk)) throw new Error('Gradle completed but the APK is missing: ' + apk);
   console.log('APK:', apk);
 }

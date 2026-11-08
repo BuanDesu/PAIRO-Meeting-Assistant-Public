@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent } from '../src/shortcuts.js';
+import { MeetingEngine } from '../src/meeting-engine.js';
+import { PrompterPublisher, PrompterReceiver } from '../src/prompter-sync.js';
+import { randomUUID } from 'node:crypto';
 import { OfflineVoiceInput } from '../src/voice-input.js';
 
 const source = (await readFile(new URL('../src/main.js', import.meta.url), 'utf8')).replace(/^import .*;\r?\n/gm, '');
@@ -30,72 +33,21 @@ function fixture(overrides = {}) {
     getAudioTracks() { return this.tracks.filter(track => track.kind === 'audio'); }
   }
   const context = {
-    DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent, OfflineVoiceInput,
+    DEFAULT_SHORTCUTS, validateShortcuts, shortcutForEvent, OfflineVoiceInput, MeetingEngine, PrompterPublisher, PrompterReceiver, setupKnowledge() {},
+    crypto: { randomUUID }, askModel: async () => '测试完整回答',
     __APP_VERSION__: '0.2.0',
     document, Capacitor: { getPlatform: () => 'web' }, defaultRoleForPlatform: () => 'desktop',
     location: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5173' },
     window: { addEventListener() {} }, localStorage: { getItem: () => null, setItem() {} },
-    setTimeout: () => 0, clearTimeout() {}, AbortController, MediaStream: Stream,
+    setTimeout: () => 0, clearTimeout() {}, AbortController, URL, MediaStream: Stream,
     PeerSession: class {}, HTMLElement: class {}, navigator: { mediaDevices: {} },
     ...overrides,
   };
   vm.createContext(context);
-  vm.runInContext(source + '\nthis.review={state,submitQuestion,startDesktop,changeDesktopCapture,setRole,attachRemoteStream,handleMobileMessage,handleDesktopMessage,navigatePage,dispatchDesktopHotkey,sendDesktopQuestion,resetConversation};', context);
+  vm.runInContext(source + '\nthis.review={makePeer,meeting,publisher,state,submitQuestion,startDesktop,changeDesktopCapture,stopCapture,endSession,setRole,attachRemoteStream,handleMobileMessage,handleDesktopMessage,navigatePage,dispatchDesktopHotkey,sendDesktopQuestion,resetConversation};', context);
   document.getElementById('llm-key').value = 'temporary-test-key';
   return { ...context.review, document, Stream };
 }
-
-test('room departure cancels requests and never forwards late answers into a new room', async () => {
-  let finish, requestSignal;
-  const fx = fixture({ askModel: args => { requestSignal = args.signal; return new Promise(resolve => { finish = resolve; }); } });
-  const sent = [];
-  fx.state.role = 'mobile';
-  fx.state.peer = { disconnect() {}, send() {} };
-  fx.state.latestImage = 'data:image/jpeg;base64,PRIVATE';
-  fx.state.chatHistory = [{ role: 'user', content: 'private history' }];
-  fx.document.getElementById('desktop-answer').textContent = 'previous private answer';
-  const request = fx.submitQuestion('room A question');
-  await tick();
-  fx.document.getElementById('leave-room').listeners.click();
-  assert.equal(requestSignal.aborted, true);
-  assert.equal(fx.state.latestImage, '');
-  assert.equal(fx.state.chatHistory.length, 0);
-  fx.state.peer = { send: message => sent.push(message) };
-  finish('private answer for A');
-  await request;
-  assert.equal(sent.length, 0);
-  assert.equal(fx.state.chatHistory.length, 0);
-  assert.equal(fx.state.lastAnswer, '');
-  assert.equal(fx.document.getElementById('desktop-answer').textContent, '');
-});
-
-test('automatic requests run in order with completed history and correct busy state', async () => {
-  const calls = [], finishes = [];
-  const fx = fixture({ askModel: args => { calls.push({ question: args.question, history: [...args.history] }); return new Promise(resolve => finishes.push(resolve)); } });
-  const first = fx.submitQuestion('first');
-  const second = fx.submitQuestion('second');
-  await tick();
-  assert.equal(calls.length, 1);
-  finishes[0]('answer one');
-  await first; await tick();
-  assert.equal(fx.document.getElementById('send-button').disabled, true);
-  assert.equal(calls[1].history.length, 2);
-  finishes[1]('answer two');
-  await second;
-  assert.equal(fx.document.getElementById('send-button').disabled, false);
-  assert.equal(fx.state.chatHistory.length, 4);
-});
-
-test('clearing chat invalidates active model work', async () => {
-  let finish;
-  const fx = fixture({ askModel: () => new Promise(resolve => { finish = resolve; }) });
-  const request = fx.submitQuestion('question'); await tick();
-  fx.document.getElementById('clear-chat').listeners.click();
-  finish('late answer'); await request;
-  assert.equal(fx.state.lastAnswer, '');
-  assert.equal(fx.state.chatHistory.length, 0);
-  assert.equal(fx.document.getElementById('send-button').disabled, false);
-});
 
 test('switching roles during display permission cannot restart sharing', async () => {
   let finish;
@@ -131,6 +83,19 @@ test('empty remote streams detach old audio', () => {
   fx.document.getElementById('remote-audio').srcObject = new fx.Stream([{ kind: 'audio', id: 'old' }]);
   fx.attachRemoteStream(new fx.Stream());
   assert.equal(fx.document.getElementById('remote-audio').srcObject, null);
+});
+
+test('desktop feed status follows phone connection and disconnection while sharing', () => {
+  let callbacks;
+  const fx = fixture({ PeerSession: class { constructor(options) { callbacks = options; this.phase = 'waiting'; } } });
+  fx.state.displayStream = new fx.Stream();
+  const peer = fx.makePeer('desktop'); fx.state.peer = peer;
+  callbacks.onStatus('waiting');
+  assert.equal(fx.document.getElementById('desktop-feed-status').textContent, '等待手机配对');
+  peer.phase = 'connected'; callbacks.onStatus('connected');
+  assert.equal(fx.document.getElementById('desktop-feed-status').textContent, '正在分享');
+  peer.phase = 'disconnected'; callbacks.onStatus('disconnected');
+  assert.equal(fx.document.getElementById('desktop-feed-status').textContent, '等待手机配对');
 });
 
 test('native picker cancellation gives Chinese guidance without creating capture or a room', async () => {
@@ -183,38 +148,6 @@ test('ending the session during capture replacement releases the new source with
   assert.equal(track.stopped, true); assert.equal(fx.state.peer, null); assert.equal(fx.state.displayStream, null);
 });
 
-test('cancel waiting preserves context and a fresh request cannot be overwritten by an old result', async () => {
-  const finishes = [];
-  const fx = fixture({ askModel: () => new Promise(resolve => finishes.push(resolve)) });
-  fx.state.chatHistory = [{ role: 'user', content: 'keep this context' }];
-  fx.state.latestImage = 'keep this screenshot';
-  const old = fx.submitQuestion('old question'); await tick();
-  fx.document.getElementById('cancel-model').listeners.click();
-  assert.equal(fx.state.modelPending, 0);
-  assert.equal(fx.state.chatHistory.length, 1);
-  assert.equal(fx.state.latestImage, 'keep this screenshot');
-  const fresh = fx.submitQuestion('fresh question'); await tick();
-  finishes[1]('fresh answer'); await fresh;
-  finishes[0]('old answer'); await old;
-  assert.equal(fx.state.lastAnswer, 'fresh answer');
-  assert.equal(fx.state.modelPending, 0);
-  assert.equal(fx.state.chatHistory.length, 3);
-});
-
-test('retry uses corrected settings and a departed room discards the retry attachment', async () => {
-  let fail = true, received;
-  const fx = fixture({ askModel: async args => { if (fail) throw new Error('invalid API Key'); received = args; return 'answer'; } });
-  await fx.submitQuestion('retry question', 'screenshot');
-  assert.equal(fx.document.getElementById('retry-model').hidden, false);
-  fx.document.getElementById('llm-key').value = 'corrected-key';
-  fail = false;
-  fx.document.getElementById('retry-model').listeners.click(); await tick();
-  assert.equal(received.apiKey, 'corrected-key');
-  assert.equal(received.imageDataUrl, 'screenshot');
-  fx.document.getElementById('leave-room').listeners.click();
-  assert.equal(fx.state.retryRequest, null);
-});
-
 test('changing AI configuration invalidates a pending connection test', async () => {
   let finish, captured;
   const fx = fixture({ askModel: args => { captured = args; return new Promise(resolve => { finish = resolve; }); } });
@@ -240,57 +173,6 @@ test('non-secret preferences persist on input before blur while API Key editing 
   assert.equal(writes.length, count); assert.ok(!JSON.stringify(writes).includes('must-never-persist'));
 });
 
-test('partial answers show before completion but cancellation rejects late updates and forwarding', async () => {
-  let finish, onPartial;
-  const sent = [];
-  const fx = fixture({ askModel: args => { onPartial = args.onPartial; return new Promise(resolve => { finish = resolve; }); } });
-  fx.state.peer = { send: async message => sent.push(message) };
-  const request = fx.submitQuestion('流式问题'); await tick();
-  onPartial('正在逐步回答');
-  const pending = [...fx.state.modelNodes][0];
-  const body = pending.children.at(-1);
-  assert.equal(body.textContent, '正在逐步回答');
-  assert.equal(fx.state.chatHistory.length, 0);
-  assert.equal(sent.length, 0);
-  fx.document.getElementById('cancel-model').listeners.click();
-  onPartial('不应显示的迟到内容'); finish('不应提交的答案'); await request;
-  assert.equal(body.textContent, '正在逐步回答');
-  assert.equal(pending.removed, true);
-  assert.equal(fx.state.lastAnswer, '');
-  assert.equal(sent.length, 0);
-});
-
-test('leaving during screenshot decoding discards image and acknowledgment even if decoding finishes late', async () => {
-  let finish, decodeSignal;
-  const sent = [];
-  const fx = fixture({ decodeScreenshot: (_message, options) => { decodeSignal = options.signal; return new Promise(resolve => { finish = resolve; }); }, validScreenshotId: () => true });
-  fx.state.role = 'mobile';
-  fx.state.peer = { disconnect() {}, send: async message => sent.push(message) };
-  const receiving = fx.handleMobileMessage({ type: 'screenshot', id: 'old-room', image: 'private-image' });
-  await tick();
-  fx.document.getElementById('leave-room').listeners.click();
-  assert.equal(decodeSignal.aborted, true);
-  fx.state.peer = { send: async message => sent.push(message) };
-  finish(); await receiving;
-  assert.equal(sent.length, 0);
-  assert.equal(fx.state.latestImage, '');
-  assert.equal(fx.state.screenshotReceivers.size, 0);
-});
-
-test('Num3 copies selection without navigation or focus and sends a text-only automatic question', async () => {
-  const sent = [];
-  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, copySelection: async () => '选中的问题是什么？' } } });
-  const peer = fx.state.peer = { phase: 'connected', send: async message => sent.push(message) };
-  fx.state.displayStream = new fx.Stream(); fx.state.room = 'SAME-ROOM';
-  fx.state.latestImage = 'data:image/png;base64,OLD';
-  fx.navigatePage('desktop', 'keys');
-  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, 'SAME-ROOM');
-  await fx.dispatchDesktopHotkey('text');
-  assert.equal(fx.state.pages.desktop, 'keys');
-  assert.equal(sent.length, 1); assert.equal(sent[0].text, '选中的问题是什么？');
-  assert.equal(sent[0].autoAsk, true); assert.equal(sent[0].image, undefined);
-});
-
 test('a selection read finishing after session departure is never sent', async () => {
   let finish; const sent = [];
   const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, copySelection: () => new Promise(resolve => { finish = resolve; }) } } });
@@ -300,94 +182,11 @@ test('a selection read finishing after session departure is never sent', async (
   finish('old selection'); await reading; assert.equal(sent.length, 0);
 });
 
-test('ongoing voice questions revoke answer typing without discarding a new selection; a session reset still discards it', async () => {
-  let finish; const sent = [];
-  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, copySelection: () => new Promise(resolve => { finish = resolve; }) } } });
-  fx.state.displayStream = new fx.Stream(); fx.state.peer = { phase: 'connected', send: async value => sent.push(value) };
-  let reading = fx.dispatchDesktopHotkey('text');
-  await fx.handleDesktopMessage({ type: 'answer-invalidated' });
-  finish('selected while voice is active'); await reading;
-  assert.equal(sent.length, 1); assert.equal(sent[0].text, 'selected while voice is active');
-  reading = fx.dispatchDesktopHotkey('text'); fx.resetConversation();
-  finish('belongs to previous session'); await reading; assert.equal(sent.length, 1);
-});
-
-test('answer is retrieved only by matching explicit request, never displayed, and repeated hotkey cancels', async () => {
-  const token = 'a'.repeat(32), sent = [], typed = []; let stops = 0;
-  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, prepareTyping: async () => token, typeAnswer: async value => typed.push(value), cancelTyping: async () => { stops++; } } } });
-  fx.state.displayStream = new fx.Stream(); fx.state.peer = { phase: 'connected', send: async value => sent.push(value) };
-  await fx.handleDesktopMessage({ type: 'answer-result', id: token, status: 'ready', text: 'unsolicited' }); assert.equal(typed.length, 0);
-  await fx.dispatchDesktopHotkey('type-answer');
-  assert.equal(sent[0].type, 'answer-request');
-  await fx.handleDesktopMessage({ type: 'answer-result', id: 'b'.repeat(32), status: 'ready', text: 'wrong token' }); assert.equal(typed.length, 0);
-  await fx.handleDesktopMessage({ type: 'answer-result', id: token, status: 'ready', text: '完整回答' });
-  assert.equal(typed[0].text, '完整回答'); assert.ok(!fx.document.getElementById('desktop-answer').textContent);
-  await fx.dispatchDesktopHotkey('type-answer'); await fx.dispatchDesktopHotkey('type-answer');
-  await fx.handleDesktopMessage({ type: 'answer-result', id: token, status: 'ready', text: 'late' });
-  assert.equal(typed.length, 1); assert.ok(stops >= 2);
-});
-
-test('new question, mobile clear and peer departure invalidate a pending typing request', async () => {
-  const typed = []; const token = 'c'.repeat(32);
-  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, prepareTyping: async () => token, typeAnswer: async value => typed.push(value), cancelTyping: async () => {} } } });
-  fx.state.displayStream = new fx.Stream(); fx.state.peer = { phase: 'connected', send: async () => {} };
-  for (const invalidate of [() => fx.handleDesktopMessage({ type: 'answer-invalidated' }), () => fx.sendDesktopQuestion('new voice question'), () => fx.resetConversation()]) {
-    await fx.dispatchDesktopHotkey('type-answer'); await invalidate();
-    await fx.handleDesktopMessage({ type: 'answer-result', id: token, status: 'ready', text: 'old answer' });
-  }
-  assert.equal(typed.length, 0); assert.equal(fx.state.typingRequest, null);
-});
-
-test('phone never falls back to a previous success when the newest queued question fails', async () => {
-  const sent = [];
-  const fx = fixture({ askModel: async ({ question }) => { if (question === 'failure') throw new Error('provider unavailable'); return 'previous success'; } });
-  fx.state.role = 'mobile'; fx.state.peer = { phase: 'connected', send: async value => sent.push(value) };
-  const first = fx.submitQuestion('success'), second = fx.submitQuestion('failure');
-  await first; await second;
-  await fx.handleMobileMessage({ type: 'answer-request', id: 'e'.repeat(32) });
-  assert.equal(sent.at(-1).status, 'empty'); assert.equal(sent.at(-1).text, undefined);
-});
-
-test('phone shares only a completed current answer, and failed/cancelled questions revoke older answers', async () => {
-  const sent = []; let finish;
-  const fx = fixture({ askModel: () => new Promise(resolve => { finish = resolve; }) });
-  fx.state.role = 'mobile'; fx.state.peer = { phase: 'connected', send: async value => sent.push(value) };
-  fx.state.lastAnswer = 'old answer';
-  const request = fx.submitQuestion('new question'); await tick();
-  const id = 'd'.repeat(32);
-  await fx.handleMobileMessage({ type: 'answer-request', id });
-  assert.equal(sent.at(-1).status, 'busy'); assert.equal(sent.at(-1).text, undefined);
-  finish('latest complete answer'); await request;
-  assert.equal(sent.filter(item => item.type === 'answer-result').length, 1); // no automatic answer push
-  await fx.handleMobileMessage({ type: 'answer-request', id }); assert.equal(sent.at(-1).text, 'latest complete answer');
-  fx.document.getElementById('cancel-model').listeners.click();
-  await fx.handleMobileMessage({ type: 'answer-request', id }); assert.equal(sent.at(-1).status, 'empty');
-  fx.state.lastAnswer = 'previous';
-  fx.document.getElementById('llm-key').value = '';
-  await fx.submitQuestion('cannot submit');
-  await fx.handleMobileMessage({ type: 'answer-request', id }); assert.equal(sent.at(-1).status, 'empty');
-});
-
-test('screenshot auto-question waits for decoding and uses its own image even when automatic reception is disabled', async () => {
-  let decoded; const calls = [], sent = [];
-  const fx = fixture({ decodeScreenshot: () => new Promise(resolve => { decoded = resolve; }), validScreenshotId: () => true, askModel: async args => { calls.push(args); return 'phone only'; } });
-  fx.state.role = 'mobile'; fx.state.peer = { send: async message => sent.push(message) };
-  const image = 'data:image/jpeg;base64,TEST';
-  const receiving = fx.handleMobileMessage({ type: 'screenshot', id: 'new-shot', image, question: '回答图中问题' });
-  await tick(); assert.equal(calls.length, 0);
-  decoded(); await receiving; await tick(); await fx.state.modelQueue;
-  assert.equal(calls.length, 1); assert.equal(calls[0].imageDataUrl, image);
-  assert.equal(calls[0].question, '回答图中问题'); assert.equal(fx.state.pages.mobile, 'chat');
-  assert.deepEqual(sent.map(message => message.type), ['screenshot-ack']);
-  fx.handleDesktopMessage({ type: 'answer', text: 'must never display' });
-  assert.notEqual(fx.document.getElementById('desktop-answer').textContent, 'must never display');
-});
-
 test('one-to-one mode never requests microphone permission', async () => {
   let microphoneRequests = 0, systemAudioRequested;
   const video = { kind: 'video', addEventListener() {}, stop() {} }, audio = { kind: 'audio', stop() {} };
   const fx = fixture({ crypto: { getRandomValues: bytes => bytes.fill(1) },
-    PeerSession: class { setLocalStream() {} async connect() {} disconnect() {} },
+    PeerSession: class { async replaceLocalStream() { return true; } async connect() {} disconnect() {} },
     ScreenshotTransfers: class { cancelAll() {} }, navigator: { mediaDevices: {
     getDisplayMedia: async options => { systemAudioRequested = options.audio; return new fx.Stream([video, audio]); },
     getUserMedia: async () => { microphoneRequests++; throw new Error('forbidden'); },
@@ -396,4 +195,109 @@ test('one-to-one mode never requests microphone permission', async () => {
   fx.document.getElementById('capture-mic').checked = true;
   await fx.startDesktop(); assert.equal(microphoneRequests, 0); assert.equal(systemAudioRequested, true);
   assert.equal(fx.state.outgoingStream.getAudioTracks().length, 1);
+});
+
+
+test('PC submits once while phone ignores legacy model requests and typing responses', async () => {
+  const calls = [], typed = [];
+  const fx = fixture({ askModel: async args => { calls.push(args); return '电脑完整回答'; }, window: { addEventListener() {}, desktopBridge: { onShortcut() {}, prepareTyping: async () => 'token', typeAnswer: async v => typed.push(v), cancelTyping: async () => {} } } });
+  fx.state.peer = { phase: 'connected', send: async () => {} };
+  await fx.sendDesktopQuestion('电脑问题');
+  assert.equal(calls.length, 1); assert.equal(fx.meeting.lastAnswer, '电脑完整回答');
+  await fx.dispatchDesktopHotkey('type-answer'); // requires an active capture for a hotkey
+  fx.state.displayStream = new fx.Stream();
+  await fx.dispatchDesktopHotkey('type-answer');
+  assert.equal(typed[0].text, '电脑完整回答');
+  await fx.handleDesktopMessage({ type: 'answer-result', text: '手机伪造回答' });
+  assert.equal(typed.length, 1);
+  fx.state.role = 'mobile';
+  await fx.submitQuestion('手机不能提问');
+  await fx.handleMobileMessage({ type: 'request', text: '旧请求', autoAsk: true });
+  await fx.handleMobileMessage({ type: 'screenshot', question: '旧截图' });
+  assert.equal(calls.length, 1);
+});
+
+test('clear or a new question during typing preparation revokes the local answer', async () => {
+  let prepare; const typed = [];
+  const fx = fixture({ window: { addEventListener() {}, desktopBridge: { onShortcut() {}, prepareTyping: () => new Promise(r => prepare = r), typeAnswer: async v => typed.push(v), cancelTyping: async () => {} } } });
+  fx.state.peer = { phase: 'connected', send: async () => {} }; fx.state.displayStream = new fx.Stream();
+  await fx.submitQuestion('first');
+  const pending = fx.dispatchDesktopHotkey('type-answer');
+  fx.resetConversation(); prepare('token'); await pending;
+  assert.equal(typed.length, 0); assert.equal(fx.meeting.lastAnswer, '');
+});
+test('first approval preserves PC preparation, but a new phone after an approved connection clears the private conversation', async () => {
+  let callbacks;
+  const fx = fixture({ PeerSession: class { constructor(value) { callbacks = value; this.awaitingApproval = true; } approvePeer() {} } });
+  const peer = fx.state.peer = fx.makePeer('desktop');
+  await fx.submitQuestion('prepared before first pairing');
+  const allow = fx.document.getElementById('allow-peer').listeners.click;
+  callbacks.onApproval(); allow(); assert.equal(fx.meeting.lastAnswer, '测试完整回答');
+  peer.phase = 'connected'; callbacks.onStatus('connected');
+  peer.phase = 'waiting'; callbacks.onStatus('waiting');
+  callbacks.onApproval(); assert.equal(fx.meeting.lastAnswer, '测试完整回答');
+  allow(); assert.equal(fx.meeting.lastAnswer, ''); assert.equal(fx.meeting.entries.length, 0);
+});
+
+test('stopping releases capture and pending screenshot, preserves sent questions, and resumes the same room', async () => {
+  const track = kind => ({ kind, readyState: 'live', listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; }, stop() { this.readyState = 'ended'; } });
+  const first = track('video'), system = track('audio'), mic = track('audio'), next = track('video');
+  let mode = 'first', resolveAnswer;
+  const calls = [];
+  const fx = fixture({ crypto: { getRandomValues: bytes => bytes.fill(1) },
+    PeerSession: class {
+      phase = 'connected';
+      async replaceLocalStream(stream) { this.stream = stream; return true; }
+      async connect() { calls.push('connect'); }
+      disconnect() { calls.push('disconnect'); }
+      send() { return Promise.resolve(); }
+    }, askModel: () => new Promise(resolve => { resolveAnswer = resolve; }), navigator: { mediaDevices: {
+      getDisplayMedia: async () => {
+        if (mode === 'cancel') throw Object.assign(new Error('cancel'), { name: 'NotAllowedError' });
+        return new fx.Stream(mode === 'first' ? [first, system] : [next]);
+      },
+      getUserMedia: async () => { if (mode === 'first') return new fx.Stream([mic]); throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); },
+    } } });
+  fx.document.getElementById('capture-mic').checked = true;
+  await fx.startDesktop(); const room = fx.state.room, peer = fx.state.peer;
+  const answer = fx.submitQuestion('already submitted'); await tick();
+  const crop = fx.state.screenshotController = new AbortController();
+  first.listeners.ended(); // Browser's own stop-sharing action.
+  assert.deepEqual([first, system, mic].map(track => track.readyState), ['ended', 'ended', 'ended']);
+  assert.equal(crop.signal.aborted, true); assert.equal(fx.state.outgoingStream, null);
+  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, room); assert.equal(peer.stream, null);
+  resolveAnswer('retained'); await answer;
+  mode = 'cancel'; await fx.startDesktop();
+  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, room); assert.equal(peer.stream, null);
+  mode = 'resume'; await fx.startDesktop();
+  assert.equal(fx.state.peer, peer); assert.equal(fx.state.room, room); assert.equal(peer.stream.getVideoTracks()[0], next);
+  assert.equal(peer.stream.getAudioTracks().length, 0);
+  assert.equal(fx.meeting.lastAnswer, 'retained'); assert.deepEqual(calls, ['connect']);
+  fx.stopCapture(); fx.stopCapture(); assert.equal(peer.stream, null); assert.equal(fx.meeting.lastAnswer, 'retained');
+  fx.endSession(); assert.equal(fx.state.room, ''); assert.equal(fx.meeting.entries.length, 0); assert.deepEqual(calls, ['connect', 'disconnect']);
+});
+
+test('PC status distinguishes local completion, a slow send, disconnect, retry and lack of phone ACK', async () => {
+  let callbacks, settle, reject;
+  const fx = fixture({ PeerSession: class {
+    constructor(value) { callbacks = value; }
+    send() { return new Promise((resolve, fail) => { settle = resolve; reject = fail; }); }
+  } });
+  // Drive publisher flush explicitly; transport promises are controlled below.
+  fx.publisher.changed = function () { this.dirty = true; };
+  const peer = fx.state.peer = fx.makePeer('desktop');
+  const status = () => fx.document.getElementById('model-queue-status').textContent;
+  await fx.submitQuestion('completed locally'); assert.match(status(), /回答已完成 · 待连接手机/);
+  peer.phase = 'connected'; callbacks.onStatus('connected'); assert.match(status(), /待发送至手机/);
+  await fx.handleDesktopMessage({ type: 'prompter-ready', nonce: 'reader-old' });
+  const stale = fx.publisher.flush(); assert.match(status(), /待发送至手机/);
+  peer.phase = 'reconnecting'; callbacks.onStatus('lost'); assert.match(status(), /待连接手机/);
+  peer.phase = 'connected'; callbacks.onStatus('connected');
+  await fx.handleDesktopMessage({ type: 'prompter-ready', nonce: 'reader-new' });
+  settle(); await stale; assert.match(status(), /待发送至手机/);
+  const failed = fx.publisher.flush(); reject(new Error('closed')); await failed; assert.match(status(), /发送失败/);
+  await fx.handleDesktopMessage({ type: 'prompter-ready', nonce: 'reader-retry' });
+  const current = fx.publisher.flush(); assert.match(status(), /待发送至手机/);
+  settle(); await current; assert.match(status(), /已发送 · 手机接收未确认/);
+  fx.resetConversation(); assert.equal(status(), '没有待处理问题');
 });

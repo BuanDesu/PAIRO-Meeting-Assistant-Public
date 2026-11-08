@@ -115,7 +115,7 @@ public class PairoTextFixture {
 }
 '@
 Add-Type -TypeDefinition ($workerSource + "`n" + $fixture) -ReferencedAssemblies $assemblies
-$qaDirectory = Join-Path $PSScriptRoot '../release/text-workflow-qa'
+$qaDirectory = if ($env:PAIRO_QA_OUTPUT) { [IO.Path]::GetFullPath($env:PAIRO_QA_OUTPUT) } else { Join-Path $PSScriptRoot '../release/text-workflow-qa' }
 [IO.Directory]::CreateDirectory($qaDirectory) | Out-Null
 $resultPath = [IO.Path]::GetFullPath((Join-Path $qaDirectory 'native-input.json'))
 [PairoTextFixture]::Run($resultPath)

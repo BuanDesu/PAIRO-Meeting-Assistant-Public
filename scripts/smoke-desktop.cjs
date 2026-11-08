@@ -5,6 +5,7 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
+if (process.env.PAIRO_QA_OUTPUT) app.setPath('userData', path.resolve(root, process.env.PAIRO_QA_OUTPUT, 'profile'));
 const { isTrustedUiUrl, mediaPermissionKind } = require('../electron/security.cjs');
 let win, ui, signaling;
 const timeout = setTimeout(() => { console.error('Desktop smoke timed out'); app.exit(1); }, 45000);
@@ -29,7 +30,7 @@ app.whenReady().then(async () => {
   let displayHandlerCalls = 0;
   // Run the production permission handler; display source enumeration is stubbed
   // to return nothing, so this test never captures a real screen or microphone.
-  const fragment = source.slice(source.indexOf('function configureMediaPermissions()'), source.indexOf('function registerShortcuts()'));
+  const fragment = source.slice(source.indexOf('function configureMediaPermissions()'), source.indexOf('function updateGlobalShortcuts('));
   vm.runInNewContext(fragment + '\nconfigureMediaPermissions(); configureDisplayCapture();', {
     session: { defaultSession: {
       setPermissionRequestHandler: handler => session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -83,8 +84,10 @@ app.whenReady().then(async () => {
   const result = await win.webContents.executeJavaScript(`(async () => {
     const { PeerSession } = await import('/src/peer-session.js');
     const received = [], statuses = [];
+    let remote = new MediaStream(), sharing, ended = false;
     const desktop = new PeerSession({role:'desktop',onStatus:value=>statuses.push(value),onApproval:()=>desktop.approvePeer(true)});
-    const phone = new PeerSession({role:'mobile',onMessage:value=>received.push(value),onStatus:value=>statuses.push(value)});
+    const phone = new PeerSession({role:'mobile',onMessage:value=>received.push(value),onStatus:value=>statuses.push(value),
+      onStream:(stream, active)=>{remote=stream;sharing=active},onRoomEnded:()=>{ended=true}});
     const wait = async predicate => {
       const until=Date.now()+12000;
       while(!predicate()) { if(Date.now()>until) {
@@ -97,11 +100,27 @@ app.whenReady().then(async () => {
         throw new Error('RTC timeout: '+JSON.stringify({desktop:await summarize(desktop),phone:await summarize(phone),offerMatches:desktop.pc?.localDescription?.sdp===phone.pc?.remoteDescription?.sdp,answerMatches:phone.pc?.localDescription?.sdp===desktop.pc?.remoteDescription?.sdp,statuses}));
       } await new Promise(resolve=>setTimeout(resolve,20)); }
     };
+    const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;
+    const painter=canvas.getContext('2d');
+    const draw=setInterval(()=>{painter.fillStyle=Date.now()%2?'red':'blue';painter.fillRect(0,0,640,360);},40);
+    const video=canvas.captureStream(20).getVideoTracks()[0];
+    const audio=new AudioContext(), osc=audio.createOscillator();
+    const tracks=[audio.createMediaStreamDestination(),audio.createMediaStreamDestination()].map(out=>{osc.connect(out);return out.stream.getAudioTracks()[0]});
+    osc.start(); await audio.resume();
     try {
-      desktop.setLocalStream(new MediaStream());
       await desktop.connect(${JSON.stringify(signalBase)},'SMOKE234');
       await phone.connect(${JSON.stringify(signalBase)},'SMOKE234');
-      await wait(()=>desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open');
+      await wait(()=>desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open'&&sharing===false);
+      const sameChannel=desktop.channel, samePc=desktop.pc;
+      await desktop.replaceLocalStream(new MediaStream([video,...tracks]));
+      await wait(()=>sharing===true&&remote.getVideoTracks().length===1&&remote.getAudioTracks().length===2);
+      await desktop.replaceLocalStream(null);
+      await wait(()=>sharing===false&&remote.getTracks().length===0);
+      await desktop.replaceLocalStream(new MediaStream([video,tracks[0]]));
+      await wait(()=>sharing===true&&remote.getVideoTracks().length===1&&remote.getAudioTracks().length===1);
+      if(desktop.channel!==sameChannel||desktop.pc!==samePc) throw new Error('Capture pause/resume renegotiated or lost data channel');
+      await desktop.replaceLocalStream(null);
+      await wait(()=>sharing===false&&remote.getTracks().length===0);
       const image='data:image/jpeg;base64,'+'A'.repeat(900000);
       await desktop.send({type:'screenshot',image});
       await wait(()=>received.length===1);
@@ -109,20 +128,20 @@ app.whenReady().then(async () => {
       const maximum=desktop.pc.sctp.maxMessageSize;
       const oldPc=desktop.pc;
       desktop.scheduleMediaRecovery(0);
-      await wait(()=>desktop.pc!==oldPc&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open');
+      await wait(()=>desktop.pc!==oldPc&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open'&&sharing===false);
       await desktop.send({type:'text',text:'after media recovery'});
       await wait(()=>received.length===2);
       if(received[1].text!=='after media recovery') throw new Error('Media recovery lost the data channel');
       const oldSocket=phone.signal;
       oldSocket.close();
-      await wait(()=>phone.signal!==oldSocket&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open');
+      await wait(()=>phone.signal!==oldSocket&&desktop.channel?.readyState==='open'&&phone.channel?.readyState==='open'&&sharing===false);
       await desktop.send({type:'text',text:'after signaling reconnect'});
       await wait(()=>received.length===3);
       if(received[2].text!=='after signaling reconnect') throw new Error('Signaling recovery lost the data channel');
       desktop.disconnect();
-      await wait(()=>phone.pc===null);
-      return {negotiatedMaxMessageSize:maximum,screenshotBytes:image.length,mediaRecovery:true,signalingReconnect:true,peerDepartureCleaned:true};
-    } finally {desktop.disconnect();phone.disconnect();}
+      await wait(()=>ended&&phone.pc===null&&phone.reconnectToken==='');
+      return {negotiatedMaxMessageSize:maximum,screenshotBytes:image.length,mediaRecovery:true,signalingReconnect:true,peerDepartureCleaned:true,pausedConnection:true,captureResumedOnSameChannel:true,audioCountChanged:true,pausedRecovery:true};
+    } finally {desktop.disconnect();phone.disconnect();clearInterval(draw);[video,...tracks].forEach(track=>track.stop());await audio.close();}
   })()`, true);
   console.log(JSON.stringify({ electron: process.versions.electron, displayPermissionReachedPicker: true, ...result }));
   clearTimeout(timeout);

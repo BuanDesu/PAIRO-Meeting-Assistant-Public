@@ -129,7 +129,7 @@ test('rejects legacy/incompatible protocol before joining and relays media resta
   const fx = await fixture(t);
   const old = await fx.connect();
   const rejected = nextJson(old);
-  old.send(JSON.stringify({ type: 'join', role: 'desktop', room: 'SAFE2345' }));
+  old.send(JSON.stringify({ type: 'join', protocolVersion: 3, role: 'desktop', room: 'SAFE2345' }));
   assert.match((await rejected).message, /版本不兼容/);
   assert.equal(fx.service.rooms.size, 0);
   const desktop = await fx.connect();
@@ -185,6 +185,29 @@ test('connection and room limits reject excess clients and idle sockets expire',
   const idle = await fx.connect();
   await once(idle, 'close');
   assert.equal(fx.service.rooms.size, 1);
+});
+
+test('explicit phone leave revokes its token and desktop leave destroys the approved room', async t => {
+  const fx = await fixture(t);
+  const desktop = await fx.connect();
+  desktop.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'desktop', room: 'SAFE2345', requireApproval: true }));
+  await nextJson(desktop);
+  const phone = await fx.connect();
+  phone.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345' }));
+  await nextJson(phone); await nextJson(desktop);
+  desktop.send(JSON.stringify({ type: 'approve', allow: true }));
+  const token = (await nextJson(phone)).reconnectToken; await nextJson(desktop);
+  const closed = once(phone, 'close'), left = nextJson(desktop);
+  phone.send(JSON.stringify({ type: 'leave' }));
+  await closed; await left;
+  const returning = await fx.connect();
+  returning.send(JSON.stringify({ type: 'join', protocolVersion: PROTOCOL_VERSION, role: 'mobile', room: 'SAFE2345', reconnectToken: token }));
+  assert.equal((await nextJson(returning)).approvalRequired, true); await nextJson(desktop);
+  const ended = nextJson(returning), desktopClosed = once(desktop, 'close'), phoneClosed = once(returning, 'close');
+  desktop.send(JSON.stringify({ type: 'leave' }));
+  assert.equal((await ended).type, 'room-ended');
+  await Promise.all([desktopClosed, phoneClosed]);
+  assert.equal(fx.service.rooms.size, 0);
 });
 
 test('malformed HTTP request target returns 400 and leaves the service healthy', async t => {

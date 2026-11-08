@@ -11,6 +11,7 @@ test('build provenance records the actual clean source and rejects mismatched or
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init');
+  git('remote', 'add', 'origin', 'https://github.com/BuanDesu/PAIRO-Meeting-Assistant-Public.git');
   writeFileSync(join(root, 'package.json'), JSON.stringify({ version: '1.2.3' }));
   writeFileSync(join(root, 'package-lock.json'), JSON.stringify({ version: '1.2.3', packages: { '': { version: '1.2.3' }, 'node_modules/electron': { version: '44.4.5' }, 'node_modules/@capacitor/android': { version: '8.5.2' } } }));
   git('add', '.');

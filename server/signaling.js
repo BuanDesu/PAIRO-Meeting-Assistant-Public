@@ -167,6 +167,21 @@ export function createSignalingServer({ iceServers, allowedOrigins = process.env
         return;
       }
       const room = rooms.get(meta.room);
+      if (message.type === 'leave') {
+        if (meta.role === 'desktop' && room) {
+          rooms.delete(meta.room);
+          for (const peer of room.values()) {
+            const member = sockets.get(peer);
+            if (member) member.room = null;
+            if (peer !== ws) sendJson(peer, { type: 'room-ended' });
+            peer.close(1000, 'room ended');
+          }
+        } else {
+          if (room) { room.peerApproved = false; room.approvedToken = null; }
+          ws.close(1000, 'left room');
+        }
+        return;
+      }
       if (message.type === 'approve' && meta.role === 'desktop' && typeof message.allow === 'boolean') {
         const phone = room?.get('mobile');
         if (!phone) return;

@@ -1,6 +1,13 @@
 import { DataChannelTransport } from './data-channel.js';
 import { PROTOCOL_VERSION } from './protocol.js';
 const DEFAULT_ICE = [{ urls: 'stun:stun.l.google.com:19302' }];
+const MEDIA_SLOTS = ['video', 'audio', 'audio'];
+
+function captureTracks(stream) {
+  const video = stream?.getVideoTracks() || [], audio = stream?.getAudioTracks() || [];
+  if (video.length > 1 || audio.length > 2 || (!video.length && audio.length)) throw new Error('共享支持一个画面和最多两路声音');
+  return [video[0] || null, audio[0] || null, audio[1] || null];
+}
 
 export function normalizeBaseUrl(value) {
   const raw = String(value || '').trim();
@@ -19,12 +26,13 @@ export function toWebSocketUrl(baseUrl) {
 }
 
 export class PeerSession {
-  constructor({ role, onStatus = () => {}, onMessage = () => {}, onStream = () => {}, onPeerLeft = () => {}, onApproval = () => {}, requireApproval = true, retryBaseMs = 1000, negotiationTimeoutMs = 20000, recoveryDelayMs = 3000, maxReconnectAttempts = 6, maxMediaAttempts = 3 }) {
+  constructor({ role, onStatus = () => {}, onMessage = () => {}, onStream = () => {}, onPeerLeft = () => {}, onRoomEnded = () => {}, onApproval = () => {}, requireApproval = true, retryBaseMs = 1000, negotiationTimeoutMs = 20000, recoveryDelayMs = 3000, maxReconnectAttempts = 6, maxMediaAttempts = 3, retryCooldownMs = 30000 }) {
     this.role = role;
     this.onStatus = onStatus;
     this.onMessage = onMessage;
     this.onStream = onStream;
     this.onPeerLeft = onPeerLeft;
+    this.onRoomEnded = onRoomEnded;
     this.onApproval = onApproval;
     this.requireApproval = requireApproval;
     this.reconnectToken = '';
@@ -33,7 +41,12 @@ export class PeerSession {
     this.pc = null;
     this.channel = null;
     this.localStream = null;
+    this.localSlots = [];
+    this.mediaRevision = 0;
+    this.mediaTail = Promise.resolve();
     this.remoteStream = new MediaStream();
+    this.remoteMedia = null;
+    this.remoteTracks = new Map();
     this.pendingCandidates = [];
     this.peerPresent = false;
     this.offerPending = false;
@@ -46,6 +59,7 @@ export class PeerSession {
     this.negotiationTimeoutMs = negotiationTimeoutMs;
     this.recoveryDelayMs = recoveryDelayMs;
     this.maxReconnectAttempts = maxReconnectAttempts;
+    this.retryCooldownMs = retryCooldownMs;
     this.maxMediaAttempts = maxMediaAttempts;
     this.reconnectAttempts = 0;
     this.mediaAttempts = 0;
@@ -60,38 +74,84 @@ export class PeerSession {
     };
   }
 
-  report(phase, message) { this.phase = phase; this.onStatus(message); }
-
-  setLocalStream(stream) {
-    this.localStream = stream;
-    if (this.pc) this.addLocalTracks();
+  report(phase, message) {
+    const changed = this.phase !== phase;
+    this.phase = phase;
+    if (changed && this.role === 'mobile') this.renderMediaState();
+    this.onStatus(message);
   }
 
-  async replaceLocalStream(stream) {
-    if (this.closed) throw new Error('会话已结束');
-    const pc = this.pc;
-    if (!pc) { this.localStream = stream; return; }
-    const remaining = [...stream.getTracks()], changes = [];
-    for (const sender of pc.getSenders().filter(item => item.track)) {
-      const index = remaining.findIndex(track => track.kind === sender.track.kind);
-      if (index < 0) throw new Error('音视频轨道已变化，请停止后重新开始分享');
-      changes.push({ sender, previous: sender.track, next: remaining.splice(index, 1)[0] });
-    }
-    if (remaining.length) throw new Error('音视频轨道已变化，请停止后重新开始分享');
-    const applied = [];
-    try {
-      for (const change of changes) {
-        if (!this.isCurrent(pc)) throw new Error('连接正在恢复，请稍后更换共享内容');
-        if (change.previous === change.next) continue;
-        await change.sender.replaceTrack(change.next);
-        applied.push(change);
+  replaceLocalStream(stream) {
+    if (this.closed) return Promise.reject(new Error('会话已结束'));
+    const next = captureTracks(stream);
+    const revision = ++this.mediaRevision;
+    // Make pause authoritative before any in-flight replaceTrack or recovery finishes.
+    if (!stream) { this.localStream = null; this.publishMediaState(); }
+    const job = this.mediaTail.catch(() => {}).then(async () => {
+      const current = () => !this.closed && revision === this.mediaRevision;
+      if (!current()) return false;
+      const pc = this.pc;
+      const applied = [];
+      try {
+        for (const [index, { sender }] of this.localSlots.entries()) {
+          if (!current() || this.pc !== pc) break;
+          if (sender.track === next[index]) continue;
+          const track = sender.track;
+          await sender.replaceTrack(next[index]);
+          applied.push({ sender, track });
+        }
+        if (!current()) return false;
+        if (pc !== this.pc) throw new Error('连接正在恢复，请稍后重试共享');
+        this.localStream = stream;
+        this.publishMediaState();
+        return true;
+      } catch (error) {
+        if (!current()) return false;
+        if (this.isCurrent(pc)) {
+          if (!stream) this.scheduleMediaRecovery(0);
+          else for (const { sender, track } of applied.reverse()) {
+            if (!current() || !this.isCurrent(pc)) break;
+            await sender.replaceTrack(track).catch(() => this.scheduleMediaRecovery(0));
+          }
+        }
+        throw error;
       }
-      if (!this.isCurrent(pc)) throw new Error('连接正在恢复，请稍后更换共享内容');
-      this.localStream = stream;
-    } catch (error) {
-      if (this.isCurrent(pc)) for (const change of applied.reverse()) await change.sender.replaceTrack(change.previous).catch(() => {});
-      throw error;
+    });
+    this.mediaTail = job;
+    return job;
+  }
+
+  publishMediaState() {
+    if (this.role !== 'desktop' || this.channel?.readyState !== 'open') return;
+    const active = captureTracks(this.localStream);
+    const mids = this.localSlots.map(({ mid }, index) => active[index] ? mid : null);
+    void this.send({ type: 'media-state', video: mids[0] ?? null, audio: mids.slice(1).filter(mid => mid != null) }).catch(() => {});
+  }
+
+  receiveMediaState(message) {
+    const mid = value => typeof value === 'string' && /^[a-zA-Z0-9]{1,16}$/.test(value);
+    if ((message.video !== null && !mid(message.video)) || !Array.isArray(message.audio) || message.audio.length > 2 || !message.audio.every(mid) ||
+        (message.video === null && message.audio.length) || new Set([message.video, ...message.audio]).size !== 1 + message.audio.length) return;
+    this.remoteMedia = message;
+    this.renderMediaState();
+  }
+
+  renderMediaState() {
+    const media = this.remoteMedia;
+    const tracks = [];
+    if (this.phase === 'connected' && media?.video != null) {
+      const video = this.remoteTracks.get(media.video);
+      if (video?.kind === 'video' && video.readyState === 'live' && !video.muted) {
+        tracks.push(video);
+        for (const mid of media.audio) {
+          const audio = this.remoteTracks.get(mid);
+          if (audio?.kind === 'audio' && audio.readyState === 'live') tracks.push(audio);
+        }
+      }
     }
+    const previous = this.remoteStream.getTracks();
+    if (tracks.length !== previous.length || tracks.some((track, index) => track !== previous[index])) this.remoteStream = new MediaStream(tracks);
+    this.onStream(this.remoteStream, this.phase === 'connected' && media ? media.video !== null : null);
   }
 
   async connect(baseUrl, room) {
@@ -151,11 +211,11 @@ export class PeerSession {
       ws.addEventListener('error', () => fail(new Error('无法连接信令服务，请检查地址与网络')), { once: true });
       ws.addEventListener('close', event => {
         if (!settled) fail(new Error('信令连接已关闭'));
-        if (!this.closed && this.signal === ws) {
+        if (!this.closed && this.signal === ws && joined) {
           this.resetPeer();
           this.onPeerLeft();
           this.report(event.code === 1008 ? 'failed' : 'disconnected', event.code === 1008 ? terminalError || '电脑拒绝了连接，请确认后重新配对' : '电脑连接已中断，正在尝试恢复…');
-          if (joined && event.code !== 1008) this.scheduleReconnect();
+          if (event.code !== 1008) this.scheduleReconnect();
         }
       });
     });
@@ -164,7 +224,13 @@ export class PeerSession {
   scheduleReconnect(delay) {
     if (this.closed || this.retryTimer !== null || this.reconnecting) return;
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.report('failed', '自动重连未成功，请检查电脑程序、Wi-Fi 与防火墙，再点击重新连接');
+      this.report('failed', '连接暂未恢复，正在低频重试；请检查电脑程序、Wi-Fi 与防火墙，也可点击重新连接');
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = null;
+        if (this.closed) return;
+        this.reconnectAttempts = Math.max(0, this.maxReconnectAttempts - 1);
+        this.scheduleReconnect(0);
+      }, this.retryCooldownMs);
       return;
     }
     this.reconnectAttempts += 1;
@@ -231,6 +297,11 @@ export class PeerSession {
     if (this.closed || !message || typeof message !== 'object' || Array.isArray(message)) return;
     if (message.type === 'error') {
       this.onStatus(message.message || '信令服务拒绝连接');
+      return;
+    }
+    if (message.type === 'room-ended' && this.role === 'mobile') {
+      this.disconnect(false);
+      this.onRoomEnded();
       return;
     }
     if (message.type === 'joined') {
@@ -367,16 +438,11 @@ export class PeerSession {
       if (event.candidate) this.sendSignal({ type: 'candidate', payload: event.candidate });
     };
     pc.ontrack = event => {
-      if (!this.isCurrent(pc)) return;
-      const source = event.streams?.[0];
-      if (source) {
-        for (const track of source.getTracks()) {
-          if (!this.remoteStream.getTracks().some(existing => existing.id === track.id)) this.remoteStream.addTrack(track);
-        }
-      } else if (!this.remoteStream.getTracks().some(existing => existing.id === event.track.id)) {
-        this.remoteStream.addTrack(event.track);
-      }
-      this.onStream(this.remoteStream);
+      if (!this.isCurrent(pc) || this.role !== 'mobile') return;
+      this.remoteTracks.set(event.transceiver.mid, event.track);
+      const refresh = () => { if (this.isCurrent(pc)) this.renderMediaState(); };
+      for (const eventName of ['mute', 'unmute', 'ended']) event.track.addEventListener(eventName, refresh);
+      refresh();
     };
     pc.onconnectionstatechange = () => {
       if (!this.isCurrent(pc)) return;
@@ -393,15 +459,12 @@ export class PeerSession {
       if (this.isCurrent(pc)) this.attachChannel(event.channel, pc);
       else event.channel.close();
     };
-    if (this.role === 'desktop') this.attachChannel(pc.createDataChannel('copilot', { ordered: true }), pc);
-    this.addLocalTracks();
-  }
-
-  addLocalTracks() {
-    if (!this.pc || !this.localStream) return;
-    const attached = new Set(this.pc.getSenders().map(sender => sender.track?.id).filter(Boolean));
-    for (const track of this.localStream.getTracks()) {
-      if (!attached.has(track.id)) this.pc.addTrack(track, this.localStream);
+    if (this.role === 'desktop') {
+      const tracks = captureTracks(this.localStream);
+      // Reserve one video and two audio senders in the first offer, even when
+      // capture is paused. Track changes keep the same SDP and data channel.
+      this.localSlots = MEDIA_SLOTS.map((kind, index) => pc.addTransceiver(tracks[index] ?? kind, { direction: 'sendonly' }));
+      this.attachChannel(pc.createDataChannel('copilot', { ordered: true }), pc);
     }
   }
 
@@ -411,7 +474,11 @@ export class PeerSession {
     const current = () => !this.closed && this.channel === channel && this.pc === pc;
     const transport = this.transport = new DataChannelTransport(channel, {
       maxMessageSize: () => pc?.sctp?.maxMessageSize ?? 65536,
-      onMessage: message => current() ? this.onMessage(message) : undefined,
+      onMessage: message => {
+        if (!current()) return;
+        if (message?.type === 'media-state') { if (this.role === 'mobile') this.receiveMediaState(message); }
+        else return this.onMessage(message);
+      },
       onError: error => { if (current()) this.onStatus(error.message); },
     });
     channel.onopen = () => { if (current()) this.connected(); };
@@ -427,10 +494,11 @@ export class PeerSession {
     clearTimeout(this.recoveryTimer); this.recoveryTimer = null;
     this.mediaAttempts = 0;
     this.report('connected', 'P2P 已加密直连');
+    this.publishMediaState();
   }
 
   async maybeOffer() {
-    if (this.role !== 'desktop' || !this.peerPresent || this.awaitingApproval || !this.localStream || this.offerPending) return;
+    if (this.role !== 'desktop' || !this.peerPresent || this.awaitingApproval || this.offerPending) return;
     this.offerPending = true;
     const epoch = this.epoch;
     try {
@@ -480,17 +548,24 @@ export class PeerSession {
     const oldPc = this.pc, oldChannel = this.channel;
     this.pc = null;
     this.channel = null;
+    this.localSlots = [];
     oldPc?.close();
     oldChannel?.close();
     if (!keepPeer) { this.peerPresent = false; this.awaitingApproval = false; }
     this.offerPending = false;
     this.pendingCandidates = [];
     this.remoteStream = new MediaStream();
-    this.onStream(this.remoteStream);
+    this.remoteTracks.clear();
+    this.remoteMedia = null;
+    this.onStream(this.remoteStream, null);
   }
 
-  disconnect() {
+  disconnect(notify = true) {
+    // Local cleanup must also succeed when the socket closes during send.
+    if (notify) { try { this.sendSignal({ type: 'leave' }); } catch { /* Server expiry handles an unreachable room. */ } }
     this.closed = true;
+    this.localStream = null;
+    this.mediaRevision++;
     this.reconnectToken = '';
     clearTimeout(this.retryTimer); this.retryTimer = null;
     globalThis.window?.removeEventListener?.('online', this.onlineHandler);
