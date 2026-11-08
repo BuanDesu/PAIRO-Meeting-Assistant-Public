@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, symlink, readFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -26,7 +26,7 @@ test('DOCX and ODT extract actual paragraph text and reject entity declarations 
   assert.throws(() => officeText(zipMember('word/document.xml', '<!DOCTYPE x><w:document/>'), '.docx'), /实体/);
 });
 async function fixture(t) {
-  const base = await mkdtemp(path.join(tmpdir(), 'pairo-knowledge-'));
+  const base = await realpath(await mkdtemp(path.join(tmpdir(), 'pairo-knowledge-')));
   t.after(() => rm(base, { recursive: true, force: true }));
   const source = path.join(base, '星桥'), dataDirectory = path.join(base, 'data'); await mkdir(source);
   const calls = [], progress = [];
